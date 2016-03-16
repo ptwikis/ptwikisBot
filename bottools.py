@@ -448,7 +448,7 @@ def listar(itens):
 
 def whoreplay(user, flag, cloak):
   """
-  registra quen está no canal
+  Registra quen está no canal
   """
   users[user] = [flag, cloak]
 
@@ -528,7 +528,7 @@ def renamed(old, new):
 
 def watchBots():
   """
-  verifica se robôs vigiados estão rodando na wikipédia
+  Verifica se robôs vigiados estão rodando na wikipédia
   """
   if 'robôs' in botDB and botDB['robôs'] != '':
     bots = [b.strip().replace(' ', '_') for b in botDB['robôs'].split(',')]
@@ -553,7 +553,7 @@ def url(txt):
   """
   Troca "X(Y)" por "X%28Y%29" para tornar os links clicáveis
   """
- return txt.replace(u' ', u'_').replace(u'(', u'%28').replace(u')', u'%29')
+  return txt.replace(u' ', u'_').replace(u'(', u'%28').replace(u')', u'%29')
 
 def parseLink(link, channel, template=False):
   """
