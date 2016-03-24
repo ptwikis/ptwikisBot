@@ -65,7 +65,7 @@ dbs = {u'w': 'ptwiki',
 
 dbfile = 'bot.db'
 botDB = gdbm.open(dbfile, 'cs')
-RCFlags = set()
+RCFlags = set('esplanada')
 users = {}
 
 def wmbot(channel, message):
@@ -147,14 +147,15 @@ def cmd(args, channel, user, cloak):
       return u'Os avisos já estão ligdos, para desligar use !sem avisos'
     else:
       log.avisos.add(user)
-      return log.avisos and u'Avisos AntiVandalismo ligados', '/raw MODE #wikipedia-pt-bots +v SirBot' if 'SirBot' in users else ''
+      if RCFlags:
+        RCFlags.clear()
+      return log.avisos and u'Avisos AntiVandalismo ligados'
   elif args == u'sem avisos' and channel == '#wikipedia-pt-bots':
     if not log.avisos:
       return u'Os avisos já estão desligados, para ligar use !avisos'
     else:
       log.avisos.clear()
-      sir = 'SirBot' in users and ('/raw MODE #wikipedia-pt-bots -o SirBot' if users['SirBot'][0] == '@' else '',  '/raw MODE #wikipedia-pt-bots -v SirBot') or ('', '')
-      return (u'Avisos AntiVandalismo desligados',) + sir
+      return u'Avisos AntiVandalismo desligados'
 
   # Número de afluentes
   elif args[0:10] == u'afluentes ':
@@ -336,7 +337,7 @@ revComments = {u'Foram [[WP:REV|revertid',
 flags = ('ips', 'sem grupo', 'com grupo', 'bot', 'filtro', 'rev', 'suspeitos', 'esplanada')
 
 esplanadas = (u'Wikipédia:Esplanada/propostas/',
-              u'Wikipédia:Esplanada/geral',
+              u'Wikipédia:Esplanada/geral/',
               u'Wikipédia:Esplanada/anúncios',
               u'Wikipédia:Café',
               u'Wikipédia:Coordenação robótica')
@@ -512,8 +513,7 @@ def quit(user, cloak):
   if user in log.avisos:
     log.avisos.remove(user)
     if not log.avisos:
-      sir = 'SirBot' in users and ('/raw MODE #wikipedia-pt-bots -o SirBot' if users['SirBot'][0] == '@' else '',  '/raw MODE #wikipedia-pt-bots -v SirBot') or ('', '')
-      return '#wikipedia-pt-bots', (u'Avisos AntiVandalismo desligados, para ligar use o comando !avisos',) + sir
+      return '#wikipedia-pt-bots', u'Avisos AntiVandalismo desligados, para ligar use o comando !avisos'
 
 def renamed(old, new):
   """
