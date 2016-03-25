@@ -65,7 +65,7 @@ dbs = {u'w': 'ptwiki',
 
 dbfile = 'bot.db'
 botDB = gdbm.open(dbfile, 'cs')
-RCFlags = set('esplanada')
+RCFlags = set(['esplanada'])
 users = {}
 
 def wmbot(channel, message):
