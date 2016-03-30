@@ -373,13 +373,13 @@ def RC(msg):
 
     # Direitos de usuário
     elif msg[0] == u'Especial:Log/rights':
-      grupos = re.search(ur'alterou grupo de acesso para Usuári[ao](?:\(a\))?:([^:]+): de (.*?) para (.*?)(?:: ?(.*))?', msg[5])
+      grupos = re.search(ur'alterou grupo de acesso para Usuári[ao](?:\(a\))?:([^:]+): de (.*?) para (.*?)(?:: ?(.*)|$)', msg[5])
       if not grupos:
         return '#wikipedia-pt-bots', u'erro no parser de alteração de direitos: {!r}'.format(msg[5])
       grupos = (grupos.group(1), set(grupos.group(2).split(', ')), set(grupos.group(3).split(', ')), grupos.group(4))
       grupos = (grupos[0], [u'-' + g for g in grupos[1] - grupos[2] - {'(nenhum)'}], [u'+' + g for g in grupos[2] - grupos[1] - {'(nenhum)'}], grupos[3])
-      return '#wikipedia-pt-bots', u'{} teve seus direitos alterados por {}: {} ({}){}'.format(grupos[0],
-        msg[3], u', '.join(grupos[1] + grupos[2]), grupos[3], u'\nSirBot batchgetusers' if 'SirBot' in users else '')
+      return '#wikipedia-pt-bots', u'{} teve seus direitos alterados por {}: {} ({})'.format(grupos[0],
+        msg[3], u', '.join(grupos[1] + grupos[2]), grupos[3])
 
     # Outros registros
     elif RCFlags and ('registro' in RCFlags or 'registro/' + msg[0][13:] in RCFlags):
@@ -426,7 +426,7 @@ def RC(msg):
     # Esplanada
     elif RCFlags and 'esplanada' in RCFlags and msg[0].startswith(esplanadas):
       comment = msg[5] and (len(msg[5]) > 100 and msg[5][0:100] + u'...' or msg[5])
-      return '#wikipedia-pt-bots', u'{}\x0315 {}\x03 {} \x0314{} \x0315{}{}'.format(msg[3], u'N' in msg[1] and u'criou' or u'editou',
+      return '#wikipedia-pt-bots', u'\x0303{}\x0315 {}\x0302 {} \x0314{} \x0315{}{}'.format(msg[3], u'N' in msg[1] and u'criou' or u'editou',
         msg[0], msg[4], reUrl.sub(ur'https://\1', msg[2]), comment and u'\x03 (' + comment + u')' or u'')
 
     # Páginas
