@@ -11,7 +11,7 @@ em algum canal que o ptwikisBot esteja.
 @licença: GNU General Public License 3.0 (GPL V3)
 """
 
-import time, re, gdbm, oursql, os, socket
+import time, re, gdbm, oursql, os, socket, json
 from urllib import urlopen
 from collections import deque
 
@@ -613,3 +613,13 @@ def iteminDB(item, key):
   if key in botDB and item in botDB[key].split(','):
     return True
   return False
+
+def labsmsg(msg):
+  """
+  Recebe mensagens de programas ou usuários dentro do labs
+  igual ao relay do wm-bot
+  """
+  if msg.startswith(('#wikipedia-pt-bots ', '#wikipedia-pt-tecn ')):
+    # limita a menssagem a 450 caracteres ascii sem quebrar um utf-8 no meio
+    m = msg[19:469].decode('utf-8', 'ignore').encode('utf-8')
+    return msg[:18], m

@@ -10,7 +10,7 @@ Robô ptwikisBot no freenode, usado nos canais wikimedia de língua portuguesa.
 from twisted.words.protocols import irc
 from twisted.internet import reactor, protocol
 
-import re, gdbm, time
+import re, gdbm, time, os
 import bottools
 
 cloaks = ('wikipedia/', 'wikimedia/', 'wikibooks/', 'wikinews/', 'wikiquote/', 'wiktionary/', 'wikisource/', 'wikivoyage/', 'wikiversity/')
@@ -163,7 +163,6 @@ class Bot(irc.IRCClient):
     """
     Envia uma menssagem para um canal ou um comando crú
     para o servidor irc.
-    TODO: o processamento da menssagem está duplicado em msg()
     """
     for resp in (hasattr(resps, '__iter__') and resps or (resps,)):
       if not resp or not isinstance(resp, basestring):
@@ -184,6 +183,16 @@ class Bot(irc.IRCClient):
     a mensagem a ser enviada.
     """
     resp = bottools.RC(msg)
+    if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
+      self.msg(resp[0], resp[1])
+
+  def labsmsg(self, msg):
+    """
+    Recebe mensagens de programas ou usuários dentro do Labs, processa a
+    menssagem pelo botttols.labsmsg e envia a resposta a um canal se
+    houver retorno da função.
+    """
+    resp = bottools.labsmsg(msg)
     if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
       self.msg(resp[0], resp[1])
 
@@ -297,7 +306,7 @@ class RCFactory(protocol.ClientFactory):
     """
     Construtor do protocolo.
 
-    Ao passar self.botFactory (cosntrutor do freenode) para o protocolo do
+    Ao passar self.botFactory (construtor do freenode) para o protocolo do
     robô, permite que o robô do irc.wikimedia chame funções do robô do freenode.
     """
     p = RCfeed()
@@ -317,15 +326,45 @@ class RCFactory(protocol.ClientFactory):
     """
     print "irc.wikimedia connection failed:", reason
 
+class LabsMsg(protocol.Protocol):
+    """
+    Recebe mensagens de programas ou usuários dentro do Labs
+    """
+    def dataReceived(self, data):
+        self.botFactory.bot.labsmsg(data)
+
+class LabsFactory(protocol.ClientFactory):
+  """
+  Inicia o protocolo que recebe menssagens do Labs
+  """
+  def __init__(self, botFactory):
+    self.botFactory = botFactory
+
+  def buildProtocol(self, addr):
+    """
+    Construtor do protocolo.
+    """
+    p = LabsMsg()
+    p.factory = self
+    p.botFactory = self.botFactory
+    return p
 
 if __name__ == '__main__':    
   # Cria um construtor de protocolo
   bot = BotFactory()
   rc = RCFactory(bot) # passa bot como argumento para poder se comunicar com o robô do freenode
+  labs = LabsFactory(bot) # idem
+  labsPort = 10888 # que porta o robô está usando para receber mensagens do Labs
+
+  # Salva o nome da instância em que o robô está rodando para que outros programas do labs 
+  # saibam para onde as enviar mensagens
+  with open('bothost', 'w') as f:
+    f.write(os.uname()[1] + '.eqiad.wmflabs:' + str(labsPort))
 
   # Conecta o construtor a esse host e porta
   reactor.connectTCP("irc.freenode.net", 6667, bot)
   reactor.connectTCP("irc.wikimedia.org", 6667, rc)
+  reactor.listenTCP(labsPort, labs)
 
   # Rodar roboôs
   reactor.run()
