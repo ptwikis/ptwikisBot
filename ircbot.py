@@ -54,6 +54,8 @@ class Bot(irc.IRCClient):
     for channel in bottools.channels:
       self.join(channel)
       time.sleep(1)
+    for channel in bottools.feedChan:
+      self.join(channel)
 
   def irc_ERR_NICKNAMEINUSE(self, nick, params):
     """
@@ -103,6 +105,12 @@ class Bot(irc.IRCClient):
     """
     Chamado quando o robô recebe uma mensagem.
     """
+    # Feed do phabricator
+    if channel in bottools.feedChan:
+      resp = bottools.phabFeed(msg, user)
+      if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
+        self.msg(resp[0], resp[1])
+
     # Ignora outros robôs
     if user.split('@')[1] in self.otherbots:
       return

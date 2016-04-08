@@ -63,6 +63,8 @@ dbs = {u'w': 'ptwiki',
        u'commons': 'commonswiki',
        u'meta': 'metawiki'}
 
+feedChan = ['#mediawiki-feed']
+
 dbfile = 'bot.db'
 botDB = gdbm.open(dbfile, 'cs')
 RCFlags = set(['esplanada'])
@@ -200,6 +202,11 @@ def cmd(args, channel, user, cloak):
     return '; '.join(db('AVusers', nick, u'O cloak foi adicionado a lista', u'Esse cloak já estava na lista', '+') for nick in args[8:].split(','))
   elif args.startswith(u'avisos- '):
     return '; '.join(db('AVusers', nick, u'O cloak foi removido da lista', u'Esse cloak já não estava na lista', '-') for nick in args[8:].split(','))
+
+  # Termos no feed do Phabricator que geram notificação
+  elif args.startswith((u'phab+ ', u'phab- ')):
+    return '; '.join(db('phab', item, action=args[4]) for item in args[6:].split(','))
+
 
   # Outros
   elif args == 'reload log' and cloak:
@@ -623,3 +630,8 @@ def labsmsg(msg):
     # limita a menssagem a 450 caracteres ascii sem quebrar um utf-8 no meio
     m = msg[19:469].decode('utf-8', 'ignore').encode('utf-8')
     return msg[:18], m
+
+def phabFeed(msg, user):
+  for name in botDB['phab'].split(','):
+    if name in msg:
+      return '#wikipedia-pt-tecn', msg.replace(name, u'\x1f' + name + u'\x1f')
