@@ -105,16 +105,17 @@ class Bot(irc.IRCClient):
     """
     Chamado quando o robô recebe uma mensagem.
     """
+    # Ignora outros robôs
+    if user.split('@')[1] in self.otherbots:
+      return
+    msg = decode(msg)
+
     # Feed do phabricator
     if channel in bottools.feedChan:
       resp = bottools.phabFeed(msg, user)
       if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
         self.msg(resp[0], resp[1])
-
-    # Ignora outros robôs
-    if user.split('@')[1] in self.otherbots:
       return
-    msg = decode(msg)
 
     # Verifica se alguém está mandando mensagem em privado
     if channel == self.nickname:
