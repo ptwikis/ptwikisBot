@@ -11,7 +11,7 @@ em algum canal que o ptwikisBot esteja.
 @licença: GNU General Public License 3.0 (GPL V3)
 """
 
-import time, re, gdbm, oursql, os, socket, json
+import time, re, gdbm, oursql, os, socket
 from urllib import urlopen
 from collections import deque
 
@@ -91,12 +91,15 @@ def sql(db, query, params=tuple()):
   if db[0] == '#':
     db = db in channels and channels[db] in dbs and dbs[channels[db]] or 'ptwiki'
   try:
-    conn = oursql.connect(db=db + '_p', host=db + '.labsdb', read_default_file=os.path.expanduser('~/replica.my.cnf'), read_timeout=10, charset='utf8', use_unicode=True, autoreconnect=True, autoping=True)
-    c = conn.cursor()
+    c = conn(db)
     c.execute(query, params)
-  except Exception as e:
-    print repr(e)
-    return False
+  except oursql.OperationalError:
+    try:
+      c = conn(db)
+      c.execute(query, params)
+    except Exception as e:
+      print repr(e)
+      return False
   return c.fetchall()
 
 def conn(db, host=None):
@@ -104,9 +107,9 @@ def conn(db, host=None):
   Conecta ao banco de dados  
   """
   if host:
-    connection = oursql.connect(db=db, host=host, read_default_file=os.path.expanduser('~/replica.my.cnf'), read_timeout=10, charset='utf8', use_unicode=True)
+    connection = oursql.connect(db=db, host=host, read_default_file=os.path.expanduser('~/replica.my.cnf'), read_timeout=10, charset='utf8', use_unicode=True, autoreconnect=True, autoping=True)
   else:
-    connection = oursql.connect(db=db + '_p', host=db + '.labsdb', read_default_file=os.path.expanduser('~/replica.my.cnf'), read_timeout=10, charset='utf8', use_unicode=True)
+    connection = oursql.connect(db=db + '_p', host=db + '.labsdb', read_default_file=os.path.expanduser('~/replica.my.cnf'), read_timeout=10, charset='utf8', use_unicode=True, autoreconnect=True, autoping=True)
   return connection.cursor()
 
 def testcmd(msg):
