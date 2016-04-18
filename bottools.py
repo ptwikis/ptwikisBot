@@ -11,7 +11,7 @@ em algum canal que o ptwikisBot esteja.
 @licença: GNU General Public License 3.0 (GPL V3)
 """
 
-import time, re, gdbm, oursql, os, socket
+import time, re, oursql, os, socket, json
 from urllib import urlopen
 from collections import deque
 
@@ -65,8 +65,6 @@ dbs = {u'w': 'ptwiki',
 
 feedChan = ['#mediawiki-feed']
 
-dbfile = 'bot.db'
-botDB = gdbm.open(dbfile, 'cs')
 RCFlags = set(['esplanada'])
 users = {}
 
@@ -129,22 +127,9 @@ def cmd(args, channel, user, cloak):
   """
   # Links
   if args == u'link':
-    return db('link', True, 'Wikilinks ligado', 'Já está ligado', channel=channel)
+     return u'Wikilinks ligado' if db.append('links', channel) else u'Já está ligado'
   elif args == u'sem link':
-    return db('link', False, 'Wikilinks desligado', 'Já está desligado', channel=channel)
-
-  # Robôs
-  elif args == u'robôs':
-    resp = watchBots()
-    if resp:
-      return resp
-    else:
-      bots = 'robôs' in botDB and listar(botDB['robôs'].split(','))
-      return bots and 'Nenhum robô vigiado está sem editar. Robôs vigiados: ' + bots or 'Nenhum robô está sendo vigiado'
-  elif args.startswith(u'robôs+ '):
-    return '; '.join(db('robôs', b.replace(u'_', u' '), u'O robô foi adicionado a lista', u'Esse robô já estava na lista', '+') for b in args[7:].split(','))
-  elif args.startswith(u'robôs- '):
-    return '; '.join(db('robôs', b.replace(u'_', u' '), u'O robô foi removido da lista', u'Esse robô não estava na lista', '-') for b in args[7:].split(','))
+    return u'Wikilinks desligado' if db.remove('links', channel) else u'Já está desligado'
 
   # Avisos
   elif args == u'avisos' and channel == '#wikipedia-pt-bots':
@@ -195,20 +180,16 @@ def cmd(args, channel, user, cloak):
       u'Nenhuma flag reconhecida, flags disponíveis: {} ou registro[/tipo]'.format(u', '.join(flags))
 
   # Conhecidos que não precisam de mensagem de boas-vindas
-  elif args.startswith(u'conhecido+ '):
-    return '; '.join(db('conhecidos', nick, u'O nick foi adicionado a lista', u'Esse nick já estava na lista', '+') for nick in args[11:].split(','))
-  elif args.startswith(u'conhecido- '):
-    return '; '.join(db('conhecidos', nick, u'O nick foi removido da lista', u'Esse nick já não estava na lista', '-') for nick in args[11:].split(','))
+  elif args.startswith(u'conhecido'):
+    return db.parse('conhecidos', args[9:], u'o nick')
 
   # Usuários que acionam os avisos AntiVandalismo quando entram
-  elif args.startswith(u'avisos+ '):
-    return '; '.join(db('AVusers', nick, u'O cloak foi adicionado a lista', u'Esse cloak já estava na lista', '+') for nick in args[8:].split(','))
-  elif args.startswith(u'avisos- '):
-    return '; '.join(db('AVusers', nick, u'O cloak foi removido da lista', u'Esse cloak já não estava na lista', '-') for nick in args[8:].split(','))
+  elif args.startswith(u'avisos'):
+    return db.parse('AVusers', args[6:], u'o cloak')
 
   # Termos no feed do Phabricator que geram notificação
-  elif args.startswith((u'phab+ ', u'phab- ')):
-    return '; '.join(db('phab', item, action=args[4]) for item in args[6:].split(','))
+  elif args.startswith(u'phab'):
+    return db.parse('phab', args[4:])
 
 
   # Outros
@@ -248,7 +229,7 @@ def noCmd(msg, channel, user):
     return
 
   # Wikilinks
-  elif (u'[[' in msg or u'{{' in msg) and channel + '#link' in botDB and botDB[channel + '#link'] == 's':
+  elif (u'[[' in msg or u'{{' in msg) and channel in db['links']:
     links = [parseLink(l, channel) for l in reLink.findall(msg)]
     links += [parseLink(l, channel, True) for l in reTemplate.findall(msg)]
     resp = links and ' '.join(links) or None
@@ -375,7 +356,7 @@ def RC(msg):
         return '#wikipedia-pt-bots', u'{0} \x0311disparou filtro {1}\x0315 ({2}) em \x03[[{3}]]\x0315 https://pt.wikipedia.org/wiki/Especial:Registro_de_abusos?wpSearchUser={4}'.format(msg[3], f.group(1), f.group(3).lower(), f.group(2), msg[3].replace(u' ', u'_'))
 
     # Bloqueios
-    elif msg[0] == u'Especial:Log/block' and msg[1] == u'block' and log.avisos and not 'SirBot' in users:
+    elif msg[0] == u'Especial:Log/block' and msg[1] == u'block' and log.avisos:
       resp = re.search(ur'bloqueou "\[\[Usuári[ao](?:\(a\))?:([^]]+)\]\]".*?: ?(.*)', msg[5])
       log.logBlock(resp and resp.group(1))
       resp = resp and u'{} \x034foi bloqueado\x03 por {} ({})'.format(resp.group(1), msg[3], resp.group(2))
@@ -405,7 +386,7 @@ def RC(msg):
       log.logRev(rev, msg[0])
 
     # Edições de usuários suspeitos (blacklist)
-    if ('suspeitos' in RCFlags or log.avisos and 'SirBot' not in users) and msg[3] in log.users:
+    if ('suspeitos' in RCFlags or log.avisos) and msg[3] in log.users:
       user = log.users[msg[3]]
       comment = msg[5] and (len(msg[5]) > 100 and msg[5][0:100] + u'...' or msg[5])
       blocks = user['blocks'] and u'\x0304{} bloqueio{}\x03'.format(user['blocks'], user['blocks'] > 1 and u's' or u'')
@@ -417,10 +398,10 @@ def RC(msg):
         u'N' in msg[1] and u'\x037criou\x0315' or u'editou', msg[0], msg[4], reUrl.sub(ur'https://\1', msg[2]), comment and u'\x03 (' + comment + u')' or u'')
 
     # Edições por grupo de usuário
-    elif RCFlags and RCFlags & {'ips', 'sem grupo', 'com grupo', 'bot'} or log.avisos and 'SirBot' not in users:
+    elif RCFlags and RCFlags & {'ips', 'sem grupo', 'com grupo', 'bot'} or log.avisos:
       ip = reIp.search(msg[3])
       comment = msg[5] and (len(msg[5]) > 100 and msg[5][0:100] + u'...' or msg[5])
-      user = ('ips' in RCFlags or log.avisos and 'SirBot' not in users) and ip and u'03IP\x03 ' or \
+      user = ('ips' in RCFlags or log.avisos) and ip and u'03IP\x03 ' or \
          not ip and ('sem grupo' in RCFlags and msg[3] not in log.groups and u'11' or
         'com grupo' in RCFlags and msg[3] in log.groups and msg[3] not in log.bots and u'07' or
         'bot' in RCFlags and msg[3] in log.bots and u'14')
@@ -467,39 +448,34 @@ def join(user, channel, cloak):
   """
   Usuário entrou
   """
-  if user.split('!')[0] == 'ptwikisBot':
+  if user.split('!')[0] == 'ptwikisBot' or channel in feedChan:
     return
-  host = user[user.find('@') + 1:]
-  usersdb = 'users' in botDB and dict(u.split(',') for u in botDB['users'].split(';')) or {}
-  if not [u for u, t in usersdb.items() if u == host and int(t) > time.time()]:
-    botDB['users'] = ';'.join(','.join(u) for u in usersdb.items() + [(host, str(int(time.time()) + 57600))] if int(u[1]) > time.time())
-    newJoin = True # usuário não entrou nas últimas 16 horas
-  else:
+  now = int(time.time())
+  userhost = user[user.find('@') + 1:]
+  if not 'users' in db:
+    db['users'] = dbDict()
+  if userhost in db['users'] and db['users'][userhost] > now:
     newJoin = False # usuário já tinha entrado nas últimas 16 horas
+  else:
+    for u, t in db['users'].items():
+      if t < now:
+        del db['users'][u]
+    db['users'][userhost] = now + 57600
+    newJoin = True # usuário não entrou nas últimas 16 horas
 
   if channel == '#wikipedia-pt-bots' and cloak:
     # Registra que usuário com cloak está no canal
     users[user.split('!')[0]] = ['', cloak]
 
     # Liga os avisos AntiVandalismo quando determinados usuários entram
-    if iteminDB(cloak, 'AVusers'):
+    if cloak in db['AVusers']:
       ligar = not log.avisos
       log.avisos.add(user.split('!')[0])
       if ligar:
-        return channel, (u'Avisos AntiVandalismo ligados', '/raw MODE #wikipedia-pt-bots +v SirBot' if 'SirBot' in users else '')
-
-    # Verifica se os robôs vigiados estão rodando na Wikipédia quando alguém entra em #wikipedia-pt-bots
-    elif newJoin:
-      resp = watchBots()
-      if resp:
-        return channel, '\x02Aviso:\x02 ' + resp
-
-    # Remove voz do SirBot quando ele entrar e avisos estiverem desligados
-    elif cloak == u'wikimedia/bot/SirBot' and not log.avisos:
-      return channel, ('/raw MODE #wikipedia-pt-bots -o SirBot', '/raw MODE #wikipedia-pt-bots -v SirBot')
+        return channel, (u'Avisos AntiVandalismo ligados')
 
   # Boas vindas no canal #wikipedia-pt-ajuda
-  elif channel == '#wikipedia-pt-ajuda' and not cloak and not iteminDB(user.split('!')[0].strip('_'), 'conhecidos'):
+  elif channel == '#wikipedia-pt-ajuda' and not cloak and user.split('!')[0].strip('_') not in db['conhecidos']:
     return channel, u'Olá {}. Bem-vindo ao canal de ajuda da Wikipédia em português. Se quiser fazer alguma consulta, escreva e espere até que possamos te responder.'.format(user.split('!')[0])
 
 def modeChanged(user, channel, mode):
@@ -536,29 +512,6 @@ def renamed(old, new):
     log.avisos.remove(old)
     log.avisos.add(new)
 
-def watchBots():
-  """
-  Verifica se robôs vigiados estão rodando na wikipédia
-  """
-  if 'robôs' in botDB and botDB['robôs'] != '':
-    bots = [b.strip().replace(' ', '_') for b in botDB['robôs'].split(',')]
-  else:
-    return
-  resultado = []
-  for bot in bots:
-    api = urlopen('https://pt.wikipedia.org/w/api.php?action=query&list=recentchanges&format=xml&rcuser={}&rcprop=timestamp&rclimit=1'.format(bot))
-    r = re.search('timestamp="([-0-9T:Z]+)"', api.read())
-    if not r:
-      return
-    t = time.mktime(time.strptime(r.group(1), '%Y-%m-%dT%H:%M:%SZ'))
-    t = int(time.time() - t) / 86400
-    if t:
-      resultado.append((bot.replace('_', ' '), t))
-  if resultado:
-    resp = [u'{} não edita há {} {} \x032https://pt.wikipedia.org/wiki/Especial:Contribuições/{}\x03'.format(
-            bot, t, t == 1 and u'dia' or u'dias', bot.replace(u' ', u'_')) for bot, t in resultado]
-    return u' , '.join(resp).encode('utf-8')
-
 def url(txt):
   """
   Troca "X(Y)" por "X%28Y%29" para tornar os links clicáveis
@@ -582,47 +535,77 @@ def parseLink(link, channel, template=False):
     prefix = link[0] in prefixes and prefixes[link[0]] or u'https://{}.wikipedia.org/wiki/'.format(link[0])
     return prefix + url(u':'.join(link[1:]))
 
-def db(key, value, changed=None, nochange=None, action='=', channel=None):
-  """
-  Adiciona e remove itens do banco de dados do robô
-  """
-  value = type(value) == bool and (value and 's' or '') or isinstance(value, unicode) and value.strip().encode('utf-8') or value.strip()
-  if channel:
-    key = channel + '#' + key
-  def resp(r):
-    return hasattr(r, '__call__') and r(botDB[key]) or r
-  if action == '+':
-    values = key in botDB and [v.strip() for v in botDB[key].split(',') if v] or []
-    if value in values:
-      return resp(nochange or 'item já está na lista')
-    values.append(value)
-    botDB[key] = ','.join(values)
-    return resp(changed or 'item adicionado')
-  elif action == '-':
-    values = key in botDB and [v.strip() for v in botDB[key].split(',') if v] or []
-    if not values or value not in values:
-      return resp(nochange or 'item não está na lista')
-    botDB[key] = ','.join(v.strip() for v in values if v and v != value)
-    return resp(changed or 'item removido')
-  elif action == '=':
-    if key in botDB and botDB[key] == value:
-      return resp(nochange or 'este valor já estava no bd')
-    elif key not in botDB and value == '':
-      botDB[key] = ''
-      return resp(nochange or 'este valor já estava no bd')
-    else:
-      botDB[key] = value
-      return resp(changed or 'novo valor adicionado ao bd')
-  else:
-    return 'erro ao alterar o bd'
+class dbDict(dict):
+  def __setitem__(self, key, value):
+    dict.__setitem__(self, key, value)
+    self.sync()
 
-def iteminDB(item, key):
-  """
-  Verifica se um item existe no banco de dados do robô
-  """
-  if key in botDB and item in botDB[key].split(','):
+  def sync(self):
+    global db
+    with open('db.json', 'w') as f:
+      json.dump(db, f)
+
+  def parse(self, key, msg, name='o item', equal=False):
+    if key not in self:
+      return u'Erro: chave "%s" não existe no bd' % key
+    if type(self[key]) != list:
+      return u'Erro: chave "%s" do bd não é lista' % key
+    elif msg == '':
+      return u', '.join(self[key])
+    for action in ('+ ', '- ', '= '):
+      if msg.startswith(action):
+         items = [i.strip() for i in msg[len(action):].split(',')]
+         break
+    else:
+      return u'Erro: ação de bd local desconhecida'
+    if action == '= ':
+      if not equal:
+        return u'ação não permitida, adicione ou remova os itens individualmente'
+      if set(self[key]) == set(items):
+        return u'já era isso que estava no bd'
+      self[key] = items
+      self.sync()
+      return u', '.join(items)
+    sync = False
+    resp = []
+    for item in items:
+      if action == '+ ':
+        if item in self[key]:
+          resp.append(u'%s "%s" já estava na lista' % (name, item))
+          continue
+        self[key].append(item)
+        resp.append(u'%s "%s" foi adicionad%s à lista' % (name, item, u'a' if name[0] == u'a' else u'o'))
+        sync = True
+      elif action == '- ':
+        if item not in self[key]:
+          resp.append(u'%s "%s" já não estava na lista' % (name, item))
+          continue
+        self[key].remove(item)
+        resp.append(u'%s "%s" foi removid%s da lista' % (name, item, u'a' if name[0] == u'a' else u'o'))
+        sync = True
+    if sync:
+      self.sync()
+    return listar(resp)
+
+  def append(self, key, item):
+    if key not in self:
+      self[key] = [item]
+      return True
+    if item in self[key]:
+      return False
+    self[key].append(item)
+    self.sync()
     return True
-  return False
+
+  def remove(self, key, item):
+    if key not in self or item not in self[key]:
+      return False
+    self[key].remove(item)
+    self.sync()
+    return True
+
+with open('db.json') as f:
+  db = json.load(f, object_hook=dbDict)
 
 def labsmsg(msg):
   """
@@ -635,6 +618,6 @@ def labsmsg(msg):
     return msg[:18], m
 
 def phabFeed(msg, user):
-  for name in botDB['phab'].split(','):
+  for name in db['phab']:
     if name in msg:
       return '#wikipedia-pt-tecn', msg.replace(name, u'\x1f' + name + u'\x1f')
