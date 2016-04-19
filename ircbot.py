@@ -135,12 +135,10 @@ class Bot(irc.IRCClient):
       elif comando == 'saia' and self.cloak(user, channel):
         self.leave(channel)
       elif comando == 'reload' and self.cloak(user, channel):
-        bottools.botDB.close()
         try:
           reload(bottools)
         except Exception as e:
           self.msg(channel, 'Erro: ' + repr(e))
-          bottools.botDB = bottools.gdbm.open(bottools.dbfile, 'ws')
         else:
           self.msg(channel, 'Funções recarregadas')
 
@@ -183,7 +181,7 @@ class Bot(irc.IRCClient):
       else:
         self.msg(channel, resp)
 
-  def RC(self, msg):
+  def RC(self, channel, msg):
     """
     Recebe as mudanças recentes do canal pt.wikipedia no irc.wikimedia.org,
     as mensagem são recebidas pré-processadas no formato:
@@ -191,7 +189,7 @@ class Bot(irc.IRCClient):
     o que é enviado à função RC no bottools, a qual deve retornar o canal e
     a mensagem a ser enviada.
     """
-    resp = bottools.RC(msg)
+    resp = bottools.RC(channel, msg)
     if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
       self.msg(resp[0], resp[1])
 
@@ -286,7 +284,7 @@ class RCfeed(irc.IRCClient):
     """
     Chamado quando o robô é conectado com sucesso ao servidor.
     """
-    self.join('#pt.wikipedia')
+    self.join('#pt.wikipedia,#pt.wikibooks,#pt.wikinews,#pt.wiktionary,#pt.wikiversity,#pt.wikisource,#pt.wikiquote,#pt.wikivoyage,#br.wikimedia')
 
   def privmsg(self, user, channel, msg):
     """
@@ -297,7 +295,7 @@ class RCfeed(irc.IRCClient):
     if msg:
       msg = list(msg.groups())
       msg[5] = self.reColors.sub(u'', msg[5]) # removendo as cores do sumário
-      self.botFactory.bot.RC(msg) # envia menssagem para a função RC do robô do freenode
+      self.botFactory.bot.RC(channel, msg) # envia menssagem para a função RC do robô do freenode
 
 class RCFactory(protocol.ClientFactory):
   """

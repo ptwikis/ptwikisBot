@@ -31,7 +31,8 @@ channels = {'#wikipedia-pt': u'w',
             '#wikiversity-pt': u'v',
             '#wikisource-pt': u's',
             '#wikiquote-pt': u'q',
-            '#wikinews-pt': u'n'}
+            '#wikinews-pt': u'n',
+            '#wikidata-pt': u'd'}
 
 prefixes = {u'w': u'https://pt.wikipedia.org/wiki/',
             u'wp': u'https://pt.wikipedia.org/wiki/Wikipédia:',
@@ -43,6 +44,7 @@ prefixes = {u'w': u'https://pt.wikipedia.org/wiki/',
             u'wikt': u'https://pt.wiktionary.org/wiki/',
             u'voyage': u'https://pt.wikivoyage.org/wiki/',
             u'wmbr': u'https://br.wikimedia.org/wiki/',
+            u'd': u'https://www.wikidata.org/wiki/',
             u'mw': u'https://www.mediawiki.org/wiki/',
             u'commons': u'https://commons.wikimedia.org/wiki/',
             u'meta': u'https://meta.wikimedia.org/wiki/',
@@ -64,7 +66,6 @@ dbs = {u'w': 'ptwiki',
        u'meta': 'metawiki'}
 
 feedChan = ['#mediawiki-feed']
-
 RCFlags = set(['esplanada'])
 users = {}
 
@@ -191,6 +192,15 @@ def cmd(args, channel, user, cloak):
   elif args.startswith(u'phab'):
     return db.parse('phab', args[4:])
 
+  # Operadores do robô que têm acesso a comandos restritos
+  elif args.startswith(u'operador'):
+    return db.parse('operador', args[8:], u'o cloak')
+
+  # Páginas vigiadas
+  elif args.startswith(u'vigiar'):
+    if not cloak or cloak not in db['operador']:
+      return u'comando restrito a operadores do robô'
+    return vigiar(channel, args[6:])
 
   # Outros
   elif args == 'reload log' and cloak:
@@ -203,7 +213,7 @@ def cmd(args, channel, user, cloak):
   elif args == 'stats' and cloak:
     return u'avisos: {}, mr: {}, monitorados pelos avisos: {} ({} bloqueados, {} revertidos, {} dispararam filtros)'.format(log.avisos and u'ligado' or u'desligado',
       listar(RCFlags) or u'desligado', len(log.users), *map(sum, zip(*((u['blocks'] and 1 or 0, u['rev'] and 1 or 0, u['filter'] and 1 or 0) for u in log.users.itervalues()))))
-  elif args[0:4] == u'raw ' and cloak in ('wikipedia/danilomac', 'wikimedia/Sir-Lestaty-de-Lioncourt'): # restrito por segurança
+  elif args[0:4] == u'raw ' and cloak in db['operador']: # Envia mensagens sem processamento para servidor IRC
     return '/raw ' + args[4:]
   elif args[0:5] == u'eval ' and cloak == 'wikipedia/danilomac': # para testes, restrito por segurança
     try:
@@ -333,7 +343,7 @@ esplanadas = (u'Wikipédia:Esplanada/propostas/',
               u'Wikipédia:Café',
               u'Wikipédia:Coordenação robótica')
 
-def RC(msg):
+def RC(channel, msg):
   """
   Processa o feed do canal pt.wikipedia do irc.wikimedia.org
 
@@ -420,11 +430,14 @@ def RC(msg):
       return '#wikipedia-pt-bots', u'\x0303{}\x0315 {}\x0302 {} \x0314{} \x0315{}{}'.format(msg[3], u'N' in msg[1] and u'criou' or u'editou',
         msg[0], msg[4], reUrl.sub(ur'https://\1', msg[2]), comment and u'\x03 (' + comment + u')' or u'')
 
-    # Páginas
-    elif RCFlags and [1 for p in RCFlags if p.startswith('w:') and (p.endswith('%') and msg[0].startswith(p[2:-1]) or msg[0] == p[2:])]:
-      comment = msg[5] and (len(msg[5]) > 100 and msg[5][0:100] + u'...' or msg[5])
-      return '#wikipedia-pt-bots', u'{}\x0315 {}\x03 {} \x0314{} \x0315{}{}'.format(msg[3], u'N' in msg[1] and u'criou' or u'editou',
-        msg[0], msg[4], reUrl.sub(ur'https://\1', msg[2]), comment and u'\x03 (' + comment + u')' or u'')
+    # Páginas vigiadas
+    else:
+      for page in watch.get(channel, []):
+        if msg[0].startswith(page[:-1]) if page.endswith('%') else msg[0] == page:
+          comment = msg[5] and (len(msg[5]) > 100 and msg[5][0:100] + u'...' or msg[5])
+          return (watch[channel][page],
+            u'{}\x0315 {}\x03 {} \x0314{} \x0315{}{}'.format(msg[3], u'N' in msg[1] and u'criou' or u'editou',
+              msg[0], msg[4], reUrl.sub(ur'https://\1', msg[2]), comment and u'\x03 (' + comment + u')' or u''))
 
 #***** fim da mudanças recentes *****
 
@@ -536,19 +549,27 @@ def parseLink(link, channel, template=False):
     return prefix + url(u':'.join(link[1:]))
 
 class dbDict(dict):
+  """
+  Classe para manipular banco de dados local
+  """
   def __setitem__(self, key, value):
     dict.__setitem__(self, key, value)
     self.sync()
 
   def sync(self):
+    """
+    Salva alterações no arquivo db.json
+    """
     global db
     with open('db.json', 'w') as f:
       json.dump(db, f)
 
   def parse(self, key, msg, name='o item', equal=False):
-    if key not in self:
+    if msg.startswith('+ '):
+      pass
+    elif key not in self:
       return u'Erro: chave "%s" não existe no bd' % key
-    if type(self[key]) != list:
+    elif type(self[key]) != list:
       return u'Erro: chave "%s" do bd não é lista' % key
     elif msg == '':
       return u', '.join(self[key])
@@ -570,10 +591,13 @@ class dbDict(dict):
     resp = []
     for item in items:
       if action == '+ ':
-        if item in self[key]:
+        if key in self and item in self[key]:
           resp.append(u'%s "%s" já estava na lista' % (name, item))
           continue
-        self[key].append(item)
+        if key not in self:
+          dict.__setitem__(self, key, [item])
+        else:
+          self[key].append(item)
         resp.append(u'%s "%s" foi adicionad%s à lista' % (name, item, u'a' if name[0] == u'a' else u'o'))
         sync = True
       elif action == '- ':
@@ -606,6 +630,15 @@ class dbDict(dict):
 
 with open('db.json') as f:
   db = json.load(f, object_hook=dbDict)
+
+def vigiar(channel=None, args=None):
+  resp =  db['vigiar'].parse(channel, args, u'a página') if channel and args else None
+  global watch, watch_
+  watch = {(lambda c:'#' + c[1] + '.' + c[0][1:])(chan.split('-')):
+    {page: str(chan) for page in db['vigiar'][chan]} for chan in db['vigiar']}
+  return resp
+
+vigiar()
 
 def labsmsg(msg):
   """
