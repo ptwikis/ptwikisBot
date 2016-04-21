@@ -66,7 +66,6 @@ dbs = {u'w': 'ptwiki',
        u'meta': 'metawiki'}
 
 feedChan = ['#mediawiki-feed']
-RCFlags = set(['esplanada'])
 users = {}
 
 def wmbot(channel, message):
@@ -138,8 +137,9 @@ def cmd(args, channel, user, cloak):
       return u'Os avisos já estão ligdos, para desligar use !sem avisos'
     else:
       log.avisos.add(user)
-      if RCFlags:
-        RCFlags.clear()
+      if '#wikipedia-pt-bots' in RCFlags:
+        RCFlags['#wikipedia-pt-bots'].clear()
+        del RCFlags[fn2wm(channel)]
       return log.avisos and u'Avisos AntiVandalismo ligados'
   elif args == u'sem avisos' and channel == '#wikipedia-pt-bots':
     if not log.avisos:
@@ -162,23 +162,40 @@ def cmd(args, channel, user, cloak):
       wmbot(channel, u' '.join(msg))
 
   # Mudanças recentes
-  elif args == 'mr' and channel == '#wikipedia-pt-bots' and cloak:
-    if RCFlags:
-      RCFlags.clear()
+  elif (args == 'mr' or args[0:3] in ('mr+', 'mr-', 'mr=')) and cloak and channel in channels:
+    feedChan = fn2wm(channel)
+    chanFlags = RCFlags.get(channel, set())
+    if args == 'mr':
+      if chanFlags:
+        return u'Flags ligadas: ' + listar(chanFlags)
+      return u'Mudanças recentes desligadas, para ligar use uma flag (!mr+ <flag>): %s ou registro[/tipo]' \
+        % ', '.join(flags)
+    argFlags = set(f for f in (f.strip() for f in args[3:].split(',')) if f in flags or re.search(r'registro/\w+', f))
+    if args[2] == '-':
+      rm = len(argFlags & chanFlags)
+      if rm:
+        RCFlags[channel] -= argFlags
+        RCFlags[feedChan] = {flag: channel for flag in RCFlags[channel]}
+        return u'Removida %d flag%s, flags ligadas: %s' % (rm, u's' if rm > 1 else u'', listar(RCFlags[channel]))
+      return u'Nenhuma flag removida, flags ligadas: %s' % chanFlags
+    if args[2] == '+':
+      ad = len(argFlags - chanFlags)
+      if ad:
+        RCFlags.setdefault(channel, set()).update(argFlags)
+        RCFlags[feedChan] = {flag: channel for flag in RCFlags[channel]}
+        return u'Adicionada %d flag%s, flag ligadas: %s' % (ad, u's' if ad > 1 else u'', listar(RCFlags[channel]))
+      return u'Nenhuma flag adicionada, ' + (u'flags ligadas: ' + listar(chanFlags) if chanFlags
+        else u'adicione uma flag válida: %s ou registro[/tipo]' % u', '.join(flags))
+    # args[2] == '='
+    if argFlags:
+      RCFlags[channel] = argFlags
+      RCFlags[feedChan] = {flag: channel for flag in RCFlags[channel]}
+      return u'Flags ligadas: ' + listar(RCFlags[channel])
+    if chanFlags:
+      RCFlags[channel].clear()
+      del RCFlags[feedChan]
       return u'Mudanças recentes desligadas'
-    else:
-      return u'Para ligar as mudanças recentes use uma flag (!mr <flag>): {} ou registro[/tipo]'.format(u', '.join(flags))
-  elif args[0:3] == 'mr ' and channel == '#wikipedia-pt-bots' and cloak:
-    if u'w:' in args:
-      RCFlags.add(args[args.index(u'w:'):].replace(u'_', u' '))
-    else:
-      for flag in re.findall(ur'\bregistro/\w+', args):
-        RCFlags.add(flag)
-      for flag in flags:
-        if flag in args:
-          RCFlags.add(flag)
-    return RCFlags and u'Serão exibidos: {}, use o comando !mr para parar'.format(listar(RCFlags)) or \
-      u'Nenhuma flag reconhecida, flags disponíveis: {} ou registro[/tipo]'.format(u', '.join(flags))
+    return u'Mudanças recentes já estavam desligadas'
 
   # Conhecidos que não precisam de mensagem de boas-vindas
   elif args.startswith(u'conhecido'):
@@ -194,6 +211,8 @@ def cmd(args, channel, user, cloak):
 
   # Operadores do robô que têm acesso a comandos restritos
   elif args.startswith(u'operador'):
+    if not cloak or cloak not in db['operador']:
+      return u'comando restrito a operadores do robô'
     return db.parse('operador', args[8:], u'o cloak')
 
   # Páginas vigiadas
@@ -335,13 +354,8 @@ reRevUser = re.compile(ur'pecial:Contrib.+?/(.+?)\|')
 revComments = {u'Foram [[WP:REV|revertid',
                u'Reversão de uma ou mais',
                u'bot: revertidas edições'}
-flags = ('ips', 'sem grupo', 'com grupo', 'bot', 'filtro', 'rev', 'suspeitos', 'esplanada')
-
-esplanadas = (u'Wikipédia:Esplanada/propostas/',
-              u'Wikipédia:Esplanada/geral/',
-              u'Wikipédia:Esplanada/anúncios',
-              u'Wikipédia:Café',
-              u'Wikipédia:Coordenação robótica')
+RCFlags = {}
+flags = ('ips', 'sem grupo', 'com grupo', 'bot', 'filtro', 'rev', 'suspeitos')
 
 def RC(channel, msg):
   """
@@ -353,6 +367,7 @@ def RC(channel, msg):
   Quando a função retorna uma tupla ('canal', u'menssagem') a menssagem é
   enviada ao canal.
   """
+  rcf = RCFlags.get(channel, {})
   if msg[0][0:9] == u'Especial:':
 
     # Filtro de abusos
@@ -362,8 +377,11 @@ def RC(channel, msg):
         show = log.logFilter(msg[3], f.group(1))
       else:
         show = False
-      if f and (show and log.avisos or 'filtro' in RCFlags and u'Ações realizadas: Não autorizar' in msg[5] or 'registro/abusefilter' in RCFlags):
-        return '#wikipedia-pt-bots', u'{0} \x0311disparou filtro {1}\x0315 ({2}) em \x03[[{3}]]\x0315 https://pt.wikipedia.org/wiki/Especial:Registro_de_abusos?wpSearchUser={4}'.format(msg[3], f.group(1), f.group(3).lower(), f.group(2), msg[3].replace(u' ', u'_'))
+      chan = show and log.avisos and '#wikipedia-pt-bots' or \
+       'filtro' in rcf and u'Ações realizadas: Não autorizar' in msg[5] and rcf['filtro'] or \
+       rcf.get('registro/abusefilter')
+      if f and chan:
+        return chan, u'{0} \x0311disparou filtro {1}\x0315 ({2}) em \x03[[{3}]]\x0315 https://pt.wikipedia.org/wiki/Especial:Registro_de_abusos?wpSearchUser={4}'.format(msg[3], f.group(1), f.group(3).lower(), f.group(2), msg[3].replace(u' ', u'_'))
 
     # Bloqueios
     elif msg[0] == u'Especial:Log/block' and msg[1] == u'block' and log.avisos:
@@ -379,14 +397,16 @@ def RC(channel, msg):
         return '#wikipedia-pt-bots', u'erro no parser de alteração de direitos: {!r}'.format(msg[5])
       grupos = (grupos.group(1), set(grupos.group(2).split(', ')), set(grupos.group(3).split(', ')), grupos.group(4))
       grupos = (grupos[0], [u'-' + g for g in grupos[1] - grupos[2] - {'(nenhum)'}], [u'+' + g for g in grupos[2] - grupos[1] - {'(nenhum)'}], grupos[3])
-      return '#wikipedia-pt-bots', u'{} teve seus direitos alterados por {}: {} ({})'.format(grupos[0],
+      chan = '#wikipedia-pt-bots' if channel == '#pt.wikipedia' else '#{1}-{0}'.format(*channel.strip('#').split('.'))
+      return chan, u'{} teve seus direitos alterados por {}: {} ({})'.format(grupos[0],
         msg[3], u', '.join(grupos[1] + grupos[2]), grupos[3])
 
     # Outros registros
-    elif RCFlags and ('registro' in RCFlags or 'registro/' + msg[0][13:] in RCFlags):
-      return '#wikipedia-pt-bots', u', '.join(m for m in msg if m)
+    elif rcf and ('registro' in rcf or 'registro/' + msg[0][13:] in rcf):
+      chan = rcf.get('registro', rcf.get('registro/' + msg[0][13:]))
+      return chan, u', '.join(m for m in msg if m)
 
-  else:
+  else: # Edições
     rev = False
 
     # Registra reverções
@@ -396,7 +416,7 @@ def RC(channel, msg):
       log.logRev(rev, msg[0])
 
     # Edições de usuários suspeitos (blacklist)
-    if ('suspeitos' in RCFlags or log.avisos) and msg[3] in log.users:
+    if ('suspeitos' in rcf or log.avisos) and msg[3] in log.users:
       user = log.users[msg[3]]
       comment = msg[5] and (len(msg[5]) > 100 and msg[5][0:100] + u'...' or msg[5])
       blocks = user['blocks'] and u'\x0304{} bloqueio{}\x03'.format(user['blocks'], user['blocks'] > 1 and u's' or u'')
@@ -404,31 +424,28 @@ def RC(channel, msg):
         u'\x0313{0} revers{1} em outra{2} página{2}\x03'.format(*(lambda n:(n, n > 1 and u'ões' or u'ão', n > 1 and u's' or u''))(sum(user['rev'].values()))))
       filters = user['filter'] and u'\x0311disparou filtro{} {}\x03'.format(len(user['filter']) > 1 and u's' or u'',
         u', '.join(n > 1 and u'{}({}x)'.format(f, n) or f for f, n in user['filter'].items()))
-      return '#wikipedia-pt-bots', u'{} \x0315({}\x0315) {} \x03[[{}]] \x0314{}\x0315 {}{}'.format(msg[3], u', '.join(tag for tag in (blocks, revs, filters) if tag),
-        u'N' in msg[1] and u'\x037criou\x0315' or u'editou', msg[0], msg[4], reUrl.sub(ur'https://\1', msg[2]), comment and u'\x03 (' + comment + u')' or u'')
+      return rcf.get('suspeitos', '#wikipedia-pt-bots'), u'{} \x0315({}\x0315) {} \x03[[{}]] \x0314{}\x0315 {}{}' \
+        .format(msg[3], u', '.join(tag for tag in (blocks, revs, filters) if tag),
+        u'N' in msg[1] and u'\x037criou\x0315' or u'editou', msg[0], msg[4],
+        reUrl.sub(ur'https://\1', msg[2]), comment and u'\x03 (' + comment + u')' or u'')
 
     # Edições por grupo de usuário
-    elif RCFlags and RCFlags & {'ips', 'sem grupo', 'com grupo', 'bot'} or log.avisos:
+    elif rcf and set(rcf) & {'ips', 'sem grupo', 'com grupo', 'bot'} or log.avisos:
       ip = reIp.search(msg[3])
       comment = msg[5] and (len(msg[5]) > 100 and msg[5][0:100] + u'...' or msg[5])
-      user = ('ips' in RCFlags or log.avisos) and ip and u'03IP\x03 ' or \
-         not ip and ('sem grupo' in RCFlags and msg[3] not in log.groups and u'11' or
-        'com grupo' in RCFlags and msg[3] in log.groups and msg[3] not in log.bots and u'07' or
-        'bot' in RCFlags and msg[3] in log.bots and u'14')
+      user, chan = ('ips' in rcf or log.avisos) and ip and (u'03IP\x03 ', rcf.get('ips')) or not ip and \
+        ('sem grupo' in rcf and msg[3] not in log.groups and (u'11', rcf['sem grupo']) or
+        'com grupo' in rcf and msg[3] in log.groups and msg[3] not in log.bots and (u'07', rcf['com grupo']) or
+        'bot' in rcf and msg[3] in log.bots and (u'14', rcf['bot'])) or (None, None)
       if user:
-        return '#wikipedia-pt-bots', u'\x03{}{}\x0315 {}\x03 {} \x0314{} \x0315{}{}'.format(user, msg[3], u'N' in msg[1] and u'criou' or u'editou', msg[0], msg[4],
+        return chan or '#wikipedia-pt-bots', u'\x03{}{}\x0315 {}\x03 {} \x0314{} \x0315{}{}' \
+          .format(user, msg[3], u'N' in msg[1] and u'criou' or u'editou', msg[0], msg[4],
           reUrl.sub(ur'https://\1', msg[2]), comment and u'\x03 (' + comment + u')' or u'')
 
     # Edições revertidas
-    if rev and 'rev' in RCFlags:
+    if rev and 'rev' in rcf:
       resp = u'{} \x0313foi revertido\x03 por {} em [[{}]]'.format(rev, msg[3], msg[0])
-      return '#wikipedia-pt-bots', resp or u'Erro em aviso de reversão'
-
-    # Esplanada
-    elif RCFlags and 'esplanada' in RCFlags and msg[0].startswith(esplanadas):
-      comment = msg[5] and (len(msg[5]) > 100 and msg[5][0:100] + u'...' or msg[5])
-      return '#wikipedia-pt-bots', u'\x0303{}\x0315 {}\x0302 {} \x0314{} \x0315{}{}'.format(msg[3], u'N' in msg[1] and u'criou' or u'editou',
-        msg[0], msg[4], reUrl.sub(ur'https://\1', msg[2]), comment and u'\x03 (' + comment + u')' or u'')
+      return rcf['rev'], resp or u'Erro em aviso de reversão'
 
     # Páginas vigiadas
     else:
@@ -436,7 +453,7 @@ def RC(channel, msg):
         if msg[0].startswith(page[:-1]) if page.endswith('%') else msg[0] == page:
           comment = msg[5] and (len(msg[5]) > 100 and msg[5][0:100] + u'...' or msg[5])
           return (watch[channel][page],
-            u'{}\x0315 {}\x03 {} \x0314{} \x0315{}{}'.format(msg[3], u'N' in msg[1] and u'criou' or u'editou',
+            u'\x0303{}\x0315 {}\x0302 {} \x0314{} \x0315{}{}'.format(msg[3], u'N' in msg[1] and u'criou' or u'editou',
               msg[0], msg[4], reUrl.sub(ur'https://\1', msg[2]), comment and u'\x03 (' + comment + u')' or u''))
 
 #***** fim da mudanças recentes *****
@@ -631,11 +648,22 @@ class dbDict(dict):
 with open('db.json') as f:
   db = json.load(f, object_hook=dbDict)
 
+def fn2wm(chan):
+  """
+  Retorna o canal do irc.wikimedia correspondente ao canal do freenode
+  """
+  chan = chan.split('-')
+  if len(chan) < 2:
+    return '#pt.wikipedia'
+  return '#' + chan[1] + '.' + chan[0][1:]
+
 def vigiar(channel=None, args=None):
+  """
+  Marca páginas a vigiar no canal
+  """
   resp =  db['vigiar'].parse(channel, args, u'a página') if channel and args else None
   global watch, watch_
-  watch = {(lambda c:'#' + c[1] + '.' + c[0][1:])(chan.split('-')):
-    {page: str(chan) for page in db['vigiar'][chan]} for chan in db['vigiar']}
+  watch = {fn2wm(chan): {page: str(chan) for page in db['vigiar'][chan]} for chan in db['vigiar']}
   return resp
 
 vigiar()
