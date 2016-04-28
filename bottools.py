@@ -198,15 +198,15 @@ def cmd(args, channel, user, cloak):
     return u'Mudanças recentes já estavam desligadas'
 
   # Conhecidos que não precisam de mensagem de boas-vindas
-  elif args.startswith(u'conhecido'):
+  elif args.startswith(u'conhecido') and cloak:
     return db.parse('conhecidos', args[9:], u'o nick')
 
   # Usuários que acionam os avisos AntiVandalismo quando entram
-  elif args.startswith(u'avisos'):
+  elif args.startswith(u'avisos') and cloak and channel == '#wikipedia-pt-bots':
     return db.parse('AVusers', args[6:], u'o cloak')
 
   # Termos no feed do Phabricator que geram notificação
-  elif args.startswith(u'phab'):
+  elif args.startswith(u'phab') and cloak:
     return db.parse('phab', args[4:])
 
   # Operadores do robô que têm acesso a comandos restritos
@@ -220,6 +220,18 @@ def cmd(args, channel, user, cloak):
     if not cloak or cloak not in db['operador']:
       return u'comando restrito a operadores do robô'
     return vigiar(channel, args[6:])
+
+  # Entrar em canal
+  elif args.startswith(u'entre em #'):
+    if not cloak or cloak not in db['operador']:
+      return u'comando restrito a operadores do robô'
+    return '/raw JOIN ' + args[9:]
+
+  # Sair do canal
+  elif args == 'saia':
+    if not cloak or cloak not in db['operador']:
+      return u'comando restrito a operadores do robô'
+    return '/raw PART ' + channel
 
   # Outros
   elif args == 'reload log' and cloak:
@@ -240,10 +252,6 @@ def cmd(args, channel, user, cloak):
     except Exception as e:
       resp = repr(e)
     return resp
-  elif args == u'limpar pontuação' and cloak:
-    c = conn('p50380g50592__pt', 's2.labsdb')
-    c.execute(u"TRUNCATE edições")
-    return u'A tabela foi limpa'
 
 reOla = re.compile(u'(?i)^(olá|oi|hola|hi|hello),? (ptwikisbot|robôs|wm-bot\d?)')
 
@@ -589,7 +597,7 @@ class dbDict(dict):
     elif type(self[key]) != list:
       return u'Erro: chave "%s" do bd não é lista' % key
     elif msg == '':
-      return u', '.join(self[key])
+      return u', '.join(sorted(self[key]))
     for action in ('+ ', '- ', '= '):
       if msg.startswith(action):
          items = [i.strip() for i in msg[len(action):].split(',')]
@@ -661,9 +669,11 @@ def vigiar(channel=None, args=None):
   """
   Marca páginas a vigiar no canal
   """
-  resp =  db['vigiar'].parse(channel, args, u'a página') if channel and args else None
-  global watch, watch_
-  watch = {fn2wm(chan): {page: str(chan) for page in db['vigiar'][chan]} for chan in db['vigiar']}
+  resp =  db['vigiar'].parse(channel, args, u'a página') if channel and args != None else None
+  global watch
+  watch = {}
+  for chan in db['vigiar']:
+    watch.setdefault(fn2wm(chan), {}).update({page: str(chan) for page in db['vigiar'][chan]})
   return resp
 
 vigiar()
