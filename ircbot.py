@@ -10,7 +10,7 @@ Robô ptwikisBot no freenode, usado nos canais wikimedia de língua portuguesa.
 from twisted.words.protocols import irc
 from twisted.internet import reactor, protocol
 
-import re, gdbm, time, os
+import re, time, os
 import bottools
 
 cloaks = ('wikipedia/', 'wikimedia/', 'wikibooks/', 'wikinews/', 'wikiquote/', 'wiktionary/', 'wikisource/', 'wikivoyage/', 'wikiversity/')
@@ -33,6 +33,8 @@ class Bot(irc.IRCClient):
   username = 'ptwikisBot'
   with open('.password') as p:
     password = p.read()
+
+  whoisArgs = {}
 
   def __init__(self):
     """
@@ -239,6 +241,37 @@ class Bot(irc.IRCClient):
     em um canal.
     """
     bottools.modeChanged(args[0], channel, (set and '+' or '-') + mode)
+
+  def irc_RPL_WHOISUSER(self, prefix, params):
+    """
+    Recebe dados de whois referente ao host do usuário
+    """
+    self.whoisArgs[params[1]] = {'host': params[3]}
+    ip = re.search(ur'@.*?(\d{1,3}([.-])\d{1,3}\2\d{1,3}\2\d{1,3})', params[3])
+    if ip:
+      self.whoisArgs['ip'] = ip.group(1).replace('-', '.')
+
+  def irc_RPL_WHOISCHANNELS(self, prefix, params):
+    """
+    Recebe dados de whois referente aos canais em que o usuário está
+    """
+    self.whoisArgs[params[1]]['channels'] = [c[1:] if c[0] != '#' else c for c in params[2].split()]
+
+  def irc_330(self, prefix, params):
+    """
+    Recebe dados de whois referente ao nome de usuário registrado
+    """
+    self.whoisArgs[params[1]]['user'] = params[2]
+
+  def irc_RPL_ENDOFWHOIS(self, prefix, params):
+    """
+    Fim da lista de whois, os dados são enviados à função bottools.kickban
+    """
+    if params[1] in self.whoisArgs:
+      resp = bottools.kickban(params[1], self.whoisArgs[params[1]])
+      if resp:
+        self.cmd(resp, '#wikipedia-pt-ops')
+      del self.whoisArgs[params[1]]
 
 class BotFactory(protocol.ClientFactory):
   """

@@ -233,6 +233,20 @@ def cmd(args, channel, user, cloak):
       return u'comando restrito a operadores do robô'
     return '/raw PART ' + channel
 
+  # Kickar usuário
+  elif args.startswith('kick '):
+    if not cloak or cloak not in db['operador']:
+      return u'comando restrito a operadores do robô'
+    kuser = args[5:].split()[0].encode('utf-8')
+    return kickban(kuser, 'kick')
+
+  # Banir e kickar usuário
+  elif args.startswith('kb '):
+    if not cloak or cloak not in db['operador']:
+      return u'comando restrito a operadores do robô'
+    kuser = args[3:].split()[0].encode('utf-8')
+    return kickban(kuser, 'kb')
+
   # Outros
   elif args == 'reload log' and cloak:
     try:
@@ -689,6 +703,34 @@ def labsmsg(msg):
     return msg[:18], m
 
 def phabFeed(msg, user):
+  """
+  Notificações do Phabricator
+  """
   for name in db['phab']:
     if name in msg:
       return '#wikipedia-pt-tecn', msg.replace(name, u'\x1f' + name + u'\x1f')
+
+def kickban(nick, args):
+  """
+  Recebe dados de WHOIS e aplica um kick ou ban e kick em um usuário
+  """
+  global kb
+  if type(args) == str:
+    kb = nick, args
+    return '/raw WHOIS ' + nick
+  else:
+    if not 'kb' in globals():
+      return
+    if nick != kb[0]:
+      del kb
+      return u'Erro em função kickban'
+    action = kb[1]
+  target = 'user' in args and '$a:' + args['user'] or 'ip' in args and '!@' + args['ip'] or \
+    args.get('mask') or 'host' in args and '!@' + args['host'] or nick + '!@'
+  target = target.encode('utf-8') if type(target) == unicode else target
+  nick = nick.encode('utf-8') if type(nick) == unicode else nick
+  if action == 'kb':
+    return ['/raw MODE #wikipedia-pt-ops +b ' + target] + \
+      ['/raw KICK %s %s' % (c, nick) for c in args.get('channels', [])]
+  elif action == 'kick':
+    return ['/raw KICK %s %s' % (c, nick) for c in args.get('channels', [])]
