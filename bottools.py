@@ -24,7 +24,9 @@ channels = {'#wikipedia-pt': u'w',
             '#wikipedia-pt-social': u'w',
             '#wikipedia-pt-ajuda': u'w',
             '#wikipedia-pt-ops': u'w',
+            '#wikipedia-pt-admins': u'w',
             '#wikimedia-br': u'wmbr',
+            '#wikimedia-pt': u'wmpt',
             '#wiktionary-pt': u'wikt',
             '#wikibooks-pt': u'b',
             '#wikivoyage-pt': u'voyage',
@@ -35,7 +37,7 @@ channels = {'#wikipedia-pt': u'w',
             '#wikidata-pt': u'd'}
 
 prefixes = {u'w': u'https://pt.wikipedia.org/wiki/',
-            u'wp': u'https://pt.wikipedia.org/wiki/Wikipédia:',
+            u'WP': u'https://pt.wikipedia.org/wiki/Wikipédia:',
             u'v': u'https://pt.wikiversity.org/wiki/',
             u'b': u'https://pt.wikibooks.org/wiki/',
             u's': u'https://pt.wikisource.org/wiki/',
@@ -44,6 +46,7 @@ prefixes = {u'w': u'https://pt.wikipedia.org/wiki/',
             u'wikt': u'https://pt.wiktionary.org/wiki/',
             u'voyage': u'https://pt.wikivoyage.org/wiki/',
             u'wmbr': u'https://br.wikimedia.org/wiki/',
+            u'wmpt': u'https://pt.wikimedia.org/wiki/',
             u'd': u'https://www.wikidata.org/wiki/',
             u'mw': u'https://www.mediawiki.org/wiki/',
             u'commons': u'https://commons.wikimedia.org/wiki/',
@@ -62,11 +65,11 @@ dbs = {u'w': 'ptwiki',
        u'wikt': 'ptwiktionary',
        u'voyage': 'ptwikivoyage',
        u'wmbr': 'brwikimedia',
+       u'wmpt': 'ptwikimedia',
        u'commons': 'commonswiki',
        u'meta': 'metawiki'}
 
 feedChan = ['#mediawiki-feed']
-users = {}
 
 def wmbot(channel, message):
   """
@@ -125,8 +128,17 @@ def cmd(args, channel, user, cloak):
   essa função roda em uma thread separada para que processos
   longos não interrompam outras funções do robô
   """
+  # Chama administradores
+  if args.startswith(u'admin'):
+    nicks = ', '.join(sorted(set(nick for nick in users['#wikipedia-pt'] if nick in users and
+      users[nick].get('cloak') in set(db['wikiadmin'] + db['operador']))))
+    if channel == '#wikipedia-pt':
+      return u'Atenção solicitada! (%s)' % nicks
+    else:
+      return '#wikipedia-pt', u'%s está precisando de ajuda em %s (%s)' % (user.split('!')[0], channel, nicks)
+
   # Links
-  if args == u'link':
+  elif args == u'link':
      return u'Wikilinks ligado' if db.append('links', channel) else u'Já está ligado'
   elif args == u'sem link':
     return u'Wikilinks desligado' if db.remove('links', channel) else u'Já está desligado'
@@ -161,6 +173,25 @@ def cmd(args, channel, user, cloak):
     elif msg[0] not in channels:
       wmbot(channel, u' '.join(msg))
 
+  # Mostra última vez que viu um nick
+  elif args.startswith((u'viu o ', u'viu a ')):
+    nick = args[6:]
+    if nick in reduce(lambda a,b: a|b, users.itervalues()):
+      return u'el%s está online agora' % (u'a' if args[4] == u'a' else u'e')
+    with open('seen.json') as f:
+      seen = json.load(f)
+    if nick in seen:
+      sec = seen[nick] - int(time.time())
+      mktime = lambda n, s, p: u'%d %s' % (n, s if n == 1 else p)
+      delta = sec < 3600 and mktime(sec / 60, u'minuto', u'minutos') or \
+        sec < 86400 and mktime(sec / 3600, u'hora', u'horas') or \
+        sec < 2629800 and mktime(sec / 86400, u'dia', u'dias') or \
+        mktime(sec / 2629800, u'mês', u'meses')
+      return u'Vi el%s pela última vez há %s atrás' % (u'a' if args[4] == u'a' else u'e', delta)
+    else:
+      return u'Nunca vi esse nick'
+
+  #**** Comandos para usuários com cloak wikimedia ****
   # Mudanças recentes
   elif (args == 'mr' or args[0:3] in ('mr+', 'mr-', 'mr=')) and cloak and channel in channels:
     feedChan = fn2wm(channel)
@@ -209,17 +240,39 @@ def cmd(args, channel, user, cloak):
   elif args.startswith(u'phab') and cloak:
     return db.parse('phab', args[4:])
 
+  #**** Comandos restritos a wikiadmins e operadores ****
+  # Wikiadmins
+  elif args.startswith(u'wikiadmin'):
+    if not cloak or cloak not in db['wikiadmin'] + db['operador']:
+      return u'comando restrito a wikiadmins e operadores do robô'
+    return db.parse('wikiadmin', args[9:], u'o cloak')
+
+  # Páginas vigiadas
+  elif args.startswith(u'vigiar'):
+    if not cloak or cloak not in db['wikiadmin'] + db['operador']:
+      return u'comando restrito a wikiadmins e operadores do robô'
+    return vigiar(channel, args[6:])
+
+  # Kickar usuário
+  elif args.startswith('kick '):
+    if not cloak or cloak not in db['wikiadmin'] + db['operador']:
+      return u'comando restrito a wikiadmins e operadores do robô'
+    kuser = args[5:].split()[0].encode('utf-8')
+    return kickban(kuser, 'kick')
+
+  # Banir e kickar usuário
+  elif args.startswith('kb '):
+    if not cloak or cloak not in db['wikiadmin'] + db['operador']:
+      return u'comando restrito a wikiadmins e operadores do robô'
+    kuser = args[3:].split()[0].encode('utf-8')
+    return kickban(kuser, 'kb')
+
+  #**** Comandos para operadores ****
   # Operadores do robô que têm acesso a comandos restritos
   elif args.startswith(u'operador'):
     if not cloak or cloak not in db['operador']:
       return u'comando restrito a operadores do robô'
     return db.parse('operador', args[8:], u'o cloak')
-
-  # Páginas vigiadas
-  elif args.startswith(u'vigiar'):
-    if not cloak or cloak not in db['operador']:
-      return u'comando restrito a operadores do robô'
-    return vigiar(channel, args[6:])
 
   # Entrar em canal
   elif args.startswith(u'entre em #'):
@@ -233,33 +286,14 @@ def cmd(args, channel, user, cloak):
       return u'comando restrito a operadores do robô'
     return '/raw PART ' + channel
 
-  # Kickar usuário
-  elif args.startswith('kick '):
-    if not cloak or cloak not in db['operador']:
-      return u'comando restrito a operadores do robô'
-    kuser = args[5:].split()[0].encode('utf-8')
-    return kickban(kuser, 'kick')
-
-  # Banir e kickar usuário
-  elif args.startswith('kb '):
-    if not cloak or cloak not in db['operador']:
-      return u'comando restrito a operadores do robô'
-    kuser = args[3:].split()[0].encode('utf-8')
-    return kickban(kuser, 'kb')
+  # Envia comando sem processamento para servidor IRC
+  elif args[0:4] == u'raw ' and cloak in db['operador']:
+    return '/raw ' + args[4:]
 
   # Outros
-  elif args == 'reload log' and cloak:
-    try:
-      log.__class__ = Log
-      log.reload()
-    except Exception as e:
-      return 'Erro: ' + repr(e)
-    return u'log recarregado'
   elif args == 'stats' and cloak:
     return u'avisos: {}, mr: {}, monitorados pelos avisos: {} ({} bloqueados, {} revertidos, {} dispararam filtros)'.format(log.avisos and u'ligado' or u'desligado',
       listar(RCFlags) or u'desligado', len(log.users), *map(sum, zip(*((u['blocks'] and 1 or 0, u['rev'] and 1 or 0, u['filter'] and 1 or 0) for u in log.users.itervalues()))))
-  elif args[0:4] == u'raw ' and cloak in db['operador']: # Envia mensagens sem processamento para servidor IRC
-    return '/raw ' + args[4:]
   elif args[0:5] == u'eval ' and cloak == 'wikipedia/danilomac': # para testes, restrito por segurança
     try:
       resp = repr(eval(args[5:]))
@@ -275,15 +309,11 @@ def noCmd(msg, channel, user):
   essas funções não são processadas em thread separada como na
   função cmd, evite incluir processos demorados.
   """
-  # Ignora mensagens que começam ou terminam com "-"
-  if u'-' in (msg[0], msg[-1]):
-    return
-
   # Wikilinks
-  elif (u'[[' in msg or u'{{' in msg) and channel in db['links']:
+  if (u'[[' in msg or u'{{' in msg) and channel in db['links']:
     links = [parseLink(l, channel) for l in reLink.findall(msg)]
     links += [parseLink(l, channel, True) for l in reTemplate.findall(msg)]
-    resp = links and ' '.join(links) or None
+    resp = links and u'\x0312' + u' '.join(links) or None
     return resp
 
   # Responde olá/oi/hi/hello/hola
@@ -376,7 +406,8 @@ reRevUser = re.compile(ur'pecial:Contrib.+?/(.+?)\|')
 revComments = {u'Foram [[WP:REV|revertid',
                u'Reversão de uma ou mais',
                u'bot: revertidas edições'}
-RCFlags = {}
+if 'RCFlags' not in globals():
+  RCFlags = {}
 flags = ('ips', 'sem grupo', 'com grupo', 'bot', 'filtro', 'rev', 'suspeitos')
 
 def RC(channel, msg):
@@ -389,6 +420,8 @@ def RC(channel, msg):
   Quando a função retorna uma tupla ('canal', u'menssagem') a menssagem é
   enviada ao canal.
   """
+  if channel == '#meta.wikimedia' and msg[0] != 'Special:log/rights':
+    return
   rcf = RCFlags.get(channel, {})
   if msg[0][0:9] == u'Especial:':
 
@@ -413,13 +446,17 @@ def RC(channel, msg):
       return '#wikipedia-pt-bots', resp or u'erro no parser de bloqueio: ' + msg[5]
 
     # Direitos de usuário
-    elif msg[0] == u'Especial:Log/rights':
+    elif msg[0] in (u'Especial:Log/rights', u'Special:log/rights'):
       grupos = re.search(ur'alterou grupo de acesso para Usuári[ao](?:\(a\))?:([^:]+): de (.*?) para (.*?)(?:: ?(.*)|$)', msg[5])
+      if msg[0] == u'Special:log/rights':
+        grupos = re.search(ur'([^: ]+@[^: ]+): from (.*?) to (.*?)(?:: ?(.*)|$)', msg[5])
       if not grupos:
         return '#wikipedia-pt-bots', u'erro no parser de alteração de direitos: {!r}'.format(msg[5])
       grupos = (grupos.group(1), set(grupos.group(2).split(', ')), set(grupos.group(3).split(', ')), grupos.group(4))
-      grupos = (grupos[0], [u'-' + g for g in grupos[1] - grupos[2] - {'(nenhum)'}], [u'+' + g for g in grupos[2] - grupos[1] - {'(nenhum)'}], grupos[3])
-      chan = '#wikipedia-pt-bots' if channel == '#pt.wikipedia' else '#{1}-{0}'.format(*channel.strip('#').split('.'))
+      grupos = (grupos[0], [u'-' + g for g in grupos[1] - grupos[2] - {'(nenhum)', '(none)'}],
+        [u'+' + g for g in grupos[2] - grupos[1] - {'(nenhum)', '(none)'}], grupos[3])
+      chan = '#wikipedia-pt-bots' if channel in ('#pt.wikipedia', '#meta.wikimedia') else \
+        '#{1}-{0}'.format(*channel.strip('#').split('.'))
       return chan, u'{} teve seus direitos alterados por {}: {} ({})'.format(grupos[0],
         msg[3], u', '.join(grupos[1] + grupos[2]), grupos[3])
 
@@ -490,76 +527,47 @@ def listar(itens):
     lista += (i == n and ' e ' or i > 0 and ', ' or '') + item
   return lista
 
-def whoreplay(user, flag, cloak):
-  """
-  Registra quen está no canal
-  """
-  users[user] = [flag, cloak]
-
-def join(user, channel, cloak):
+def join(nick, channel, cloak):
   """
   Usuário entrou
   """
-  if user.split('!')[0] == 'ptwikisBot' or channel in feedChan:
-    return
   now = int(time.time())
-  userhost = user[user.find('@') + 1:]
   if not 'users' in db:
     db['users'] = dbDict()
-  if userhost in db['users'] and db['users'][userhost] > now:
+  if nick in db['users'] and db['users'][nick] > now:
     newJoin = False # usuário já tinha entrado nas últimas 16 horas
   else:
     for u, t in db['users'].items():
       if t < now:
         del db['users'][u]
-    db['users'][userhost] = now + 57600
+    db['users'][nick] = now + 57600
     newJoin = True # usuário não entrou nas últimas 16 horas
 
-  if channel == '#wikipedia-pt-bots' and cloak:
-    # Registra que usuário com cloak está no canal
-    users[user.split('!')[0]] = ['', cloak]
-
+  if channel == '#wikipedia-pt-bots' and cloak and cloak in db['AVusers']:
     # Liga os avisos AntiVandalismo quando determinados usuários entram
-    if cloak in db['AVusers']:
-      ligar = not log.avisos
-      log.avisos.add(user.split('!')[0])
-      if ligar:
-        return channel, (u'Avisos AntiVandalismo ligados')
+    ligar = not log.avisos
+    log.avisos.add(nick)
+    if ligar:
+      return channel, (u'Avisos AntiVandalismo ligados')
 
   # Boas vindas no canal #wikipedia-pt-ajuda
-  elif channel == '#wikipedia-pt-ajuda' and not cloak and user.split('!')[0].strip('_') not in db['conhecidos']:
-    return channel, u'Olá {}. Bem-vindo ao canal de ajuda da Wikipédia em português. Se quiser fazer alguma consulta, escreva e espere até que possamos te responder.'.format(user.split('!')[0])
+  elif channel == '#wikipedia-pt-ajuda' and newJoin and not cloak and nick.strip('_') not in db['conhecidos']:
+    return channel, u'Olá {}. Bem-vindo ao canal de ajuda da Wikipédia em português. Se quiser fazer alguma consulta, escreva e espere até que possamos te responder.'.format(nick)
 
-def modeChanged(user, channel, mode):
-  """
-  Usuário teve flag alterada
-  """
-  if channel == '#wikipedia-pt-bots' and user in users:
-    flag = users[user][0]
-    users[user][0] = mode == '+o' and '@' or \
-      flag == '@' and mode == '-o' and '+' or \
-      not flag and (mode == '+o' and '@' or mode == '+v' and '+') or \
-      flag == '+' and mode == '-v' and ''
-
-def quit(user, cloak):
+def quit(nick, cloak):
   """
   Usuário saiu
   """
-  user = user.split('!')[0]
-  if user in users:
-    del users[user]
-  if user in log.avisos:
-    log.avisos.remove(user)
-    if not log.avisos:
-      return '#wikipedia-pt-bots', u'Avisos AntiVandalismo desligados, para ligar use o comando !avisos'
+  log.avisos.discard(nick)
+  seen = {nick: int(time.time()) for nick in reduce(lambda a,b: a|b, (users[chan] for chan in users if chan[0] == '#'))}
+  seen[nick] = int(time.time())
+  with open('seen.json', 'w') as f:
+    json.dump(seen, f)
 
 def renamed(old, new):
   """
   Usuário alterou o nick
   """
-  if old in users:
-    users[new] = users[old]
-    del users[old]
   if old in log.avisos:
     log.avisos.remove(old)
     log.avisos.add(new)

@@ -35,16 +35,19 @@ class Bot(irc.IRCClient):
     password = p.read()
 
   whoisArgs = {}
+  users = {}
+  names = {}
 
   def __init__(self):
     """
-    Inicia a classe de registro de avisos.
-
-    Ao manter essa instância neste módulo os registrsos
-    não são perdidos quando o módulo boottols é recarregado.
+    Chamado quando uma instância do robô é iniciada.
+    Inicia a classe de registro de avisos e estabelece
+    bottools.users como referencia para self.users. Dessa
+    forma log e users não serão perdidos quando bottools
+    é recarregado.
     """
     bottools.log = bottools.Log()
-
+    bottools.users = self.users
 
   def signedOn(self):
     """
@@ -68,16 +71,6 @@ class Bot(irc.IRCClient):
     self.setNick(self.nickname)
     self.msg('Nickserv', 'IDENTIFY ' + self.password)
 
-  def joined(self, channel):
-    """
-    Chamado quando entra em um canal.
-    
-    Se entrar em #wikipedia-pt-bots chama um WHO para ver
-    quem está no canal.    
-    """
-    if channel == '#wikipedia-pt-bots':
-      self.sendLine('WHO #wikipedia-pt-bots')
-
   def msg(self, channel, message, *args):
     """
     Envia mensagem para um canal.
@@ -88,20 +81,17 @@ class Bot(irc.IRCClient):
       message = message.encode('utf-8')
     irc.IRCClient.msg(self, channel, message, *args)
 
-  def cloak(self, user, channel=None):
+  def cloak(self, user):
     """
     Verifica se o usuário tem cloak wikimedia, retorna o cloak
     se tiver, envia uma menssagem para o canl se não tiver.
     """
-    user = user.split('@', 1)[1]
+    user = user.split('@', 1)[1] if '@' in user else user
     for cloak in cloaks:
       if user.startswith(cloak):
         return user
-    if channel:
-      self.msg(channel, 'Autorizado apenas para usuários com cloak wikimedia')
-    return False
 
-  otherbots = ('wikimedia/-jem-/bot/AsimovBot', 'wikimedia/bot/wm-bot', 'wikimedia/bot/SirBot')
+  otherbots = ('wikimedia/-jem-/bot/AsimovBot', 'wikimedia/bot/wm-bot', 'wikimedia/bot/SirBot', 'services.')
 
   def privmsg(self, user, channel, msg):
     """
@@ -125,18 +115,10 @@ class Bot(irc.IRCClient):
       self.msg(user.split('!')[0], msg)
       return
 
-    # Chamada a adiministradores
-    elif msg.startswith(u'!admin') and channel != '#wikipedia-pt':
-      self.msg('#wikipedia-pt', user.split('!')[0] + ' chama administradores em ' + channel)
-
     # Comandos
     comando = msg.startswith(u'ptwikisBot:') and msg[11:].strip() or bottools.testcmd(msg)
     if comando:
-      if comando.startswith('entre em ') and channel == '#wikipedia-pt-ops' and self.cloak(user, channel):
-        self.join(comando[9:].encode('utf-8'))
-      elif comando == 'saia' and self.cloak(user, channel):
-        self.leave(channel)
-      elif comando == 'reload' and self.cloak(user, channel):
+      if comando == 'reload' and self.cloak(user) in bottools.db['operador']:
         try:
           reload(bottools)
         except Exception as e:
@@ -152,7 +134,7 @@ class Bot(irc.IRCClient):
       else:
         reactor.callInThread(self.cmdThread, comando, channel, user.split('!')[0], self.cloak(user))
 
-    # Outras mensagens são processadas pelo bottools.msg
+    # Outras mensagens são processadas pelo bottools.noCmd
     else:
       resp = bottools.noCmd(msg, channel, user)
       if resp:
@@ -178,6 +160,9 @@ class Bot(irc.IRCClient):
         continue
       if isinstance(resp, unicode):
         resp = resp.encode('utf-8')
+      if resp in bottools.channels:
+        channel = resp
+        continue
       if resp[0:5] == '/raw ' and len(resp) > 6:
         self.sendLine(resp[5:])
       else:
@@ -205,19 +190,29 @@ class Bot(irc.IRCClient):
     if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
       self.msg(resp[0], resp[1])
 
-  def irc_RPL_WHOREPLY(self, server, user):
+  def adminInvite(self, nick):
     """
-    Recebe os nomes de quem está nos canais após um comando WHO.
+    Convida um wikiadmin para o canal #wikipedia-pt-admins
     """
-    cloak = [c for c in cloaks if user[3].startswith(c)] and user[3] or None
-    bottools.whoreplay(user[5], ('@' in user[6] or '+' in user[6]) and user[6][-1] or '', cloak)
+    if nick not in self.users.get('#wikipedia-pt-admins', set()) and nick in self.users['#wikipedia-pt']:
+      self.invite(nick, '#wikipedia-pt-admins')
 
   def irc_JOIN(self, user, params):
     """
     Recebe a notificação de que alguém entrou em uma canal.
     """
+    nick = user.split('!')[0]
+    if nick == self.nickname:
+       return
     channel = params[-1]
-    resp = bottools.join(user, channel, self.cloak(user))
+    self.users[channel].add(nick)
+    self.users.setdefault(nick, {}).update({'host': user.split('@')[1]})
+    cloak = self.cloak(user)
+    if cloak:
+      self.users[nick]['cloak'] = cloak
+      if channel == '#wikipedia-pt' and cloak in bottools.db['wikiadmin']:
+        reactor.callLater(30, self.adminInvite, nick)
+    resp = bottools.join(nick, channel, self.cloak(user))
     if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
       self.cmd(resp[1], resp[0])
 
@@ -225,22 +220,55 @@ class Bot(irc.IRCClient):
     """
     Recebe a notificação de que alguém saiu (não de um canal mas do IRC).
     """
-    resp = bottools.quit(user, self.cloak(user))
+    nick = user.split('!')[0]
+    for chan in self.users:
+      if chan[0] != '#':
+        continue
+      self.users[chan].discard(nick)
+    resp = bottools.quit(user.split('!')[0])
     if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
       self.cmd(resp[1], resp[0])
+    if nick in self.users:
+      del self.users[nick]
+
+  def userLeft(self, nick, channel):
+    """
+    Recebe notificação que alguém saiu de um canal (não do IRC)
+    """
+    self.users[channel].discard(nick)
+    if nick in self.users and nick not in reduce(lambda a,b: a|b,
+      (self.users[chan] for chan in self.users if chan[0] == '#')):
+      del self.users[nick]
+
+  def userKicked(self, kicked, channel, kicker, message):
+    """
+    Chamado quando alguém é chutado de um canal
+    """
+    self.userLeft(kicked, channel)
+
+  def left(self, channel):
+    """
+    Chamado quando o robô sai de um canal (não do IRC)
+    """
+    rmNicks = self.name[channel] - reduce(lambda a,b: a|b,
+      (self.users[chan] for chan in self.users if chan[0] == '#' and chan != channel))
+    del self.users[channel]
+    for nick in rmNicks:
+      if nick in self.users:
+        del self.users[nick]
 
   def userRenamed(self, old, new):
     """
-    Recebe a notificação de que alguém mudou de nome.
+    Recebe a notificação de que alguém mudou de nick.
     """
+    for chan in self.users:
+      if old in self.users[chan]:
+        self.users[chan].remove(old)
+        self.users[chan].add(new)
+    if old in self.users:
+      self.users[new] = self.users[old]
+      del self.users[old]
     bottools.renamed(old, new)
-
-  def modeChanged(self, user, channel, set, mode, args):
-    """
-    Recebe a notificação de que alguém mudou de modo (voice, op)
-    em um canal.
-    """
-    bottools.modeChanged(args[0], channel, (set and '+' or '-') + mode)
 
   def irc_RPL_WHOISUSER(self, prefix, params):
     """
@@ -272,6 +300,33 @@ class Bot(irc.IRCClient):
       if resp:
         self.cmd(resp, '#wikipedia-pt-ops')
       del self.whoisArgs[params[1]]
+
+  def irc_RPL_NAMREPLY(self, prefix, params):
+    """
+    Recebe nomes de quem está no canal
+    """
+    self.names.setdefault(params[2], set()).update(set(nick.strip('+@') for nick in params[3].split()))
+
+  def irc_RPL_ENDOFNAMES(self, prefix, params):
+    """
+    Fim da lista de quem está no canal, envia lista para bottools.users
+    """
+    self.users[params[1]] = self.names[params[1]]
+    del self.names[params[1]]
+    if params[1] == '#wikipedia-pt':
+      self.sendLine('WHO #wikipedia-pt')
+
+  def irc_RPL_WHOREPLY(self, prefix, params):
+    """
+    Recebe a lista detalhada de quem está no canal (comando WHO)
+    params[1] é o canal, params[5] é o nick, params[3] é o host
+    """
+    if params[5] == self.nickname:
+      return
+    self.users.setdefault(params[5], {}).update({'host': params[3]})
+    cloak = self.cloak(params[3])
+    if cloak:
+      self.users[params[5]]['cloak'] = cloak
 
 class BotFactory(protocol.ClientFactory):
   """
@@ -317,7 +372,7 @@ class RCfeed(irc.IRCClient):
     """
     Chamado quando o robô é conectado com sucesso ao servidor.
     """
-    self.join('#pt.wikipedia,#pt.wikibooks,#pt.wikinews,#pt.wiktionary,#pt.wikiversity,#pt.wikisource,#pt.wikiquote,#pt.wikivoyage,#br.wikimedia')
+    self.join('#pt.wikipedia,#pt.wikibooks,#pt.wikinews,#pt.wiktionary,#pt.wikiversity,#pt.wikisource,#pt.wikiquote,#pt.wikivoyage,#br.wikimedia,#meta.wikimedia')
 
   def privmsg(self, user, channel, msg):
     """
