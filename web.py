@@ -52,25 +52,10 @@ def page():
   return html % (channels + u'<br/>\n' + phab)
 
 def app(environ, start_response):
-  if environ['REQUEST_METHOD'] == 'POST':
-    ip = environ.get('REMOTE_ADDR', '0.0.0.0')
-    if environ.get('CONTENT_TYPE') == 'application/json' and ip2bin(ip).startswith(ip2bin('192.30.252.0/22')):
-      return github(environ, start_response)
-    else:
-      return post(environ, start_response)
+  if environ['REQUEST_METHOD'] == 'POST' and environ.get('CONTENT_TYPE') == 'application/json':
+    return github(environ, start_response)
   start_response('200 OK', [('Content-Type', 'text/html')])
   return [page().encode('utf-8')]
-
-def post(environ, start_response):
-  print >> sys.stderr, 'ptwikisBot-web: Not GitHub IP: ' + environ.get('REMOTE_ADDR', '0.0.0.0')
-  start_response('200 OK', [('Content-Type', 'text/html')])
-  return ['POST method only authorized for GitHub IP range']
-
-def ip2bin(ip):
-  octets = map(int, ip.split('/')[0].split('.'))
-  binary = '{0:08b}{1:08b}{2:08b}{3:08b}'.format(*octets)
-  range = int(ip.split('/')[1]) if '/' in ip else None
-  return binary[:range] if range else binary
 
 def github(environ, start_response):
   size = int(environ.get('CONTENT_LENGTH', 0))
