@@ -55,7 +55,20 @@ class Bot(irc.IRCClient):
     """
     self.msg('NickServ', 'GHOST ' + self.nickname + ' ' + self.password)
     self.msg('Nickserv', 'IDENTIFY ' + self.password)
-    time.sleep(15)
+
+  def irc_396(self, prefix, params):
+    """
+    Recebe notificação que foi identificado
+    """
+    if params[1] == 'wikimedia/bot/ptwikisbot':
+       self.joinChannels()
+    else:
+       self.irc_unknown(prefix, '396', params)
+
+  def joinChannels(self):
+    """
+    Faz o robô entrar nos canais configurados
+    """
     for channel in bottools.channels:
       self.join(channel)
       time.sleep(1)
@@ -132,13 +145,13 @@ class Bot(irc.IRCClient):
       # adicionar uma nova função em bottools.cmd use o comando !reload para
       # recarregar o módulo bottools sem precisar reiniciar o robô.
       else:
-        reactor.callInThread(self.cmdThread, comando, channel, user.split('!')[0], self.cloak(user))
+        reactor.callInThread(self.cmdThread, comando, channel, user, self.cloak(user))
 
     # Outras mensagens são processadas pelo bottools.noCmd
     else:
       resp = bottools.noCmd(msg, channel, user)
       if resp:
-        self.msg(channel, resp)
+        self.cmd(resp, channel)
 
   def cmdThread(self, comando, channel, user, cloak):
     """
@@ -328,6 +341,30 @@ class Bot(irc.IRCClient):
     if cloak:
       self.users[params[5]]['cloak'] = cloak
 
+  def noticed(self, user, channel, message):
+    self.output('NOTICE from %s: %s' % (user.split('!')[0], message))
+
+  def output(self, message):
+    """
+    Envia mensagem para o log do robô ou para o canal que
+    estiver com o output ligado.
+    """
+    if hasattr(bottools, 'output') and bottools.output.startswith('#'):
+      self.msg(bottools.output, message)
+    else:
+      print '[%s] %s' % (time.strftime('%d-%m-%Y %H:%M:%S'), message)
+
+  def irc_unknown(self, prefix, command, params):
+    """
+    Recebe comandos que não foram processados por outras funções
+    """
+    if command in ('PONG', '333', '328'):
+      return
+    if prefix.endswith('freenode.net'):
+      self.output('%s %r' % (command, params))
+    else:
+      self.output('%s %s %r' % (prefix, command, params))
+
 class BotFactory(protocol.ClientFactory):
   """
   Inicia o protocolo do robô do freenode e reinicia quando
@@ -341,7 +378,7 @@ class BotFactory(protocol.ClientFactory):
     p = Bot()
     p.factory = self
     self.bot = p
-    print 'BuildProtocol Bot'
+    print 'BuildProtocol Bot %s' % time.strftime('%d-%m-%Y %H:%M:%S')
     return p
 
   def clientConnectionLost(self, connector, reason):
@@ -383,72 +420,58 @@ class RCfeed(irc.IRCClient):
     if msg:
       msg = list(msg.groups())
       msg[5] = self.reColors.sub(u'', msg[5]) # removendo as cores do sumário
-      self.botFactory.bot.RC(channel, msg) # envia menssagem para a função RC do robô do freenode
+      bot.bot.RC(channel, msg) # envia menssagem para a função RC do robô do freenode
 
 class RCFactory(protocol.ClientFactory):
   """
   Inicia o protocolo do robô do irc.wikimedia.org que envia as mudanças recentes.
   """
   
-  def __init__(self, botFactory):
-    """
-    Ao criar uma instância recebe em botFactory o construtor do protocolo
-    do robô do freenode e armazena em self.botFactory.
-    """
-    self.botFactory = botFactory
-
   def buildProtocol(self, addr):
     """
     Construtor do protocolo.
-
-    Ao passar self.botFactory (construtor do freenode) para o protocolo do
-    robô, permite que o robô do irc.wikimedia chame funções do robô do freenode.
     """
     p = RCfeed()
     p.factory = self
-    p.botFactory = self.botFactory
     return p
 
   def clientConnectionLost(self, connector, reason):
     """
     Se desconectar, reconecta ao servidor.
     """
+    print '[%s] irc.wikimedia connection lost:' % time.strftime('%d-%m-%Y %H:%M:%S'), reason
     connector.connect()
 
   def clientConnectionFailed(self, connector, reason):
     """
     Chamado quando a conexão falha.
     """
-    print "irc.wikimedia connection failed:", reason
+    print '[%s] irc.wikimedia connection failed:' % time.strftime('%d-%m-%Y %H:%M:%S'), reason
 
 class LabsMsg(protocol.Protocol):
     """
     Recebe mensagens de programas ou usuários dentro do Labs
     """
     def dataReceived(self, data):
-        self.botFactory.bot.labsmsg(data)
+        bot.bot.labsmsg(data)
 
 class LabsFactory(protocol.ClientFactory):
   """
   Inicia o protocolo que recebe menssagens do Labs
   """
-  def __init__(self, botFactory):
-    self.botFactory = botFactory
-
   def buildProtocol(self, addr):
     """
     Construtor do protocolo.
     """
     p = LabsMsg()
     p.factory = self
-    p.botFactory = self.botFactory
     return p
 
 if __name__ == '__main__':    
   # Cria um construtor de protocolo
   bot = BotFactory()
-  rc = RCFactory(bot) # passa bot como argumento para poder se comunicar com o robô do freenode
-  labs = LabsFactory(bot) # idem
+  rc = RCFactory()
+  labs = LabsFactory()
   labsPort = 10888 # que porta o robô está usando para receber mensagens do Labs
 
   # Salva o nome da instância em que o robô está rodando para que outros programas do labs 
