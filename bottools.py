@@ -579,11 +579,12 @@ def listar(itens):
     lista += (i == n and ' e ' or i > 0 and ', ' or '') + item
   return lista
 
-def join(nick, channel, cloak):
+def join(user, channel, cloak):
   """
   Usuário entrou
   """
   now = int(time.time())
+  nick = user.split('!')[0]
   if not 'users' in db:
     db['users'] = dbDict()
   if nick in db['users'] and db['users'][nick] > now:
@@ -821,9 +822,9 @@ def floodcheck(channel, user):
   global lastusers
   now = int(time.time())
   nick, host = user.split('!')[0], user.split('@')[1]
-  lastusers[channel] = (lastusers.get(channel, tuple()) + ((host, now),))[0:20]
+  lastusers[channel] = (lastusers.get(channel, tuple()) + ((host, now),))[-20:]
   if host.startswith('wiki') or nick.strip('_') in db['conhecidos']:
     return
-  if [u for u, t in lastusers[channel][-5:]].count(host) == 5 or \
+  if [u for u, t in lastusers[channel][-5:]].count(host) == 8 or \
     [u for u, t in lastusers[channel] if t > now - 60].count(host) == 5:
     return kickban(nick, 'kb', 'flood')

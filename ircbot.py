@@ -138,6 +138,11 @@ class Bot(irc.IRCClient):
           self.msg(channel, 'Erro: ' + repr(e))
         else:
           self.msg(channel, 'Funções recarregadas')
+      elif comando == 'rcconnect':
+        if hasattr(self, 'rcconnector'):
+          self.rcconnector.connect()
+          self.msg(channel, u'tentando reconectar ao irc.wikimedia')
+          del self.rcconnector
 
       # Comandos que podem ser chamados em qualquer canal e cuja a resposta é
       # dada no mesmo canal do comando devem ser colocados na função cmd do
@@ -225,7 +230,7 @@ class Bot(irc.IRCClient):
       self.users[nick]['cloak'] = cloak
       if channel == '#wikipedia-pt' and cloak in bottools.db['wikiadmin']:
         reactor.callLater(30, self.adminInvite, nick)
-    resp = bottools.join(nick, channel, self.cloak(user))
+    resp = bottools.join(user, channel, self.cloak(user))
     if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
       self.cmd(resp[1], resp[0])
 
@@ -365,6 +370,13 @@ class Bot(irc.IRCClient):
     else:
       self.output('%s %s %r' % (prefix, command, params))
 
+  def rclost(self, reason, connector):
+    """
+    Notifica uma queda no irc.wikimedia
+    """
+    self.rcconnector = connector
+    self.msg('#wikipedia-pt-bots', u'Falha na conexão com o irc.wikimedia (%s) use !rcconnect para reconectar')
+
 class BotFactory(protocol.ClientFactory):
   """
   Inicia o protocolo do robô do freenode e reinicia quando
@@ -447,6 +459,7 @@ class RCFactory(protocol.ClientFactory):
     Chamado quando a conexão falha.
     """
     print '[%s] irc.wikimedia connection failed:' % time.strftime('%d-%m-%Y %H:%M:%S'), reason
+    bot.bot.rclost(reason, connector)
 
 class LabsMsg(protocol.Protocol):
     """
