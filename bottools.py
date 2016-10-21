@@ -20,10 +20,6 @@ reTemplate = re.compile(ur'\{\{([^{}|]+)\}\}')
 
 channels = {'#wikipedia-pt': u'w',
             '#wikipedia-pt-bots': u'w',
-            '#wikipedia-pt-tecn': u'w',
-            '#wikipedia-pt-social': u'w',
-            '#wikipedia-pt-ajuda': u'w',
-            '#wikipedia-pt-ops': u'w',
             '#wikipedia-pt-admins': u'w',
             '#wikimedia-br': u'wmbr',
             '#wikimedia-pt': u'wmpt',
@@ -34,7 +30,10 @@ channels = {'#wikipedia-pt': u'w',
             '#wikisource-pt': u's',
             '#wikiquote-pt': u'q',
             '#wikinews-pt': u'n',
-            '#wikidata-pt': u'd'}
+            '#wikidata-pt': u'd',
+            '#wikimedia-ajuda': u'w',
+            '#wikimedia-ops-pt': u'w',
+            '#mediawiki-pt': u'mw'}
 
 prefixes = {u'w': u'https://pt.wikipedia.org/wiki/',
             u'WP': u'https://pt.wikipedia.org/wiki/Wikipédia:',
@@ -122,6 +121,8 @@ def testcmd(msg):
       return msg[len(prefix):].strip()
   return False
 
+adminCall = []
+
 def cmd(args, channel, user, cloak):
   """
   Recebe comandos e devolve uma respota ao mesmo canal,
@@ -134,8 +135,12 @@ def cmd(args, channel, user, cloak):
 
   # Chama administradores
   if args.startswith(u'admin'):
-    nicks = ', '.join(sorted(set(nick for nick in users['#wikipedia-pt'] if nick in users and
-      users[nick].get('cloak') in set(db['wikiadmin'] + db['operador']))))
+    host = user.strip('@')[1]
+    if host in [h for h, t in adminCall if t + 3600 > time.time()]:
+      return
+    adminCall.append((host, int(time.time())))
+    nicks = ', '.join(sorted([nick for nick in users['#wikipedia-pt'] if nick in users and
+      users[nick].get('cloak') in db['wikiadmin'] + db['operador']]))
     if channel == '#wikipedia-pt':
       return u'Atenção solicitada! (%s)' % nicks
     else:
@@ -182,7 +187,7 @@ def cmd(args, channel, user, cloak):
     nick = re.search(r'viu (?:([oa]) )?([^ ?]+)', args)
     if not nick:
       return u'comando não entendido'
-    if nick.group(2) in reduce(lambda a,b: a|b, (users[chan] for chan in users if chan[0] == '#')):
+    if nick.group(2) in [u for chan in users if chan[0] == '#' for u in users[chan]]:
       return u'el%s está online agora' % (u'a' if nick.group(1) == u'a' else u'e')
     with open('seen.json') as f:
       seen = json.load(f)
@@ -284,6 +289,14 @@ def cmd(args, channel, user, cloak):
       return u'comando restrito a wikiadmins e operadores do robô'
     kuser = args[3:].split()[0].encode('utf-8')
     return kickban(kuser, 'kb')
+
+  # Configura função de kickban por flood
+  elif args.startswith(u'flood'):
+    if not cloak or cloak not in db['wikiadmin'] + db['operador']:
+      return u'comando restrito a wikiadmins e operadores do robô'
+    if args[5:7] == u'+ ' and None in [re.match(ur'^\d{1,2}:\d{1,3}$', i.strip(',')) for i in args[7:].split()]:
+      return u'o item deve ser inserido no formato mensagens:segundos, ex: 5:60'
+    return db.parse('flood', args[5:], equal=True)
 
   #**** Comandos para operadores ****
   # Operadores do robô que têm acesso a comandos restritos
@@ -500,10 +513,13 @@ def RC(channel, msg):
     elif msg[0] in (u'Especial:Log/rights', u'Special:Log/rights'):
       grupos = re.search(ur'alterou grupo de acesso para Usuári[ao](?:\(a\))?:([^:]+): de (.*?) para (.*?)(?:: ?(.*)|$)', msg[5])
       if msg[0] == u'Special:log/rights':
-        grupos = re.search(ur'([^@: ]+@[^: ]+): from (.*?) to (.*?)(?:: ?(.*)|$)', msg[5])
+        grupos = re.search(ur'([^@: ]+@[^: ]+) from (.*?) to (.*?)(?:: ?(.*)|$)', msg[5])
+        # changed group membership for User:YmKavishwar@guwikiquote from ipblock-exempt, sysop to ipblock-exempt: temp access expired
       if not grupos:
-        print 'Erro no parser de alterações de direitos: %s, %r' % (channel, msg[5])
-        return #'#wikipedia-pt-bots', u'\x0314Erro no parser de alteração de direitos: ' + msg[5]
+        print u'Erro no parser de alterações de direitos: %s, %r' % (channel, msg[5])
+        return
+      elif '@ptw' not in grupos.group(1) and '@brwikimedia' not in grupos.group(1):
+        return
       grupos = (grupos.group(1), set(grupos.group(2).split(', ')), set(grupos.group(3).split(', ')), grupos.group(4))
       grupos = (grupos[0], [u'-' + g for g in grupos[1] - grupos[2] - {'(nenhum)', '(none)'}],
         [u'+' + g for g in grupos[2] - grupos[1] - {'(nenhum)', '(none)'}], grupos[3])
@@ -603,8 +619,8 @@ def join(user, channel, cloak):
     if ligar:
       return channel, (u'Avisos AntiVandalismo ligados')
 
-  # Boas vindas no canal #wikipedia-pt-ajuda
-  elif channel == '#wikipedia-pt-ajuda' and newJoin and not cloak and nick.strip('_') not in db['conhecidos']:
+  # Boas vindas no canal #wikimedia-ajuda
+  elif channel == '#wikimedia-ajuda' and newJoin and not cloak and nick.strip('_') not in db['conhecidos']:
     return channel, u'Olá {}. Bem-vindo ao canal de ajuda da Wikipédia em português. Se quiser fazer alguma consulta, escreva e espere até que possamos te responder.'.format(nick)
 
 def quit(nick):
@@ -614,8 +630,7 @@ def quit(nick):
   log.avisos.discard(nick)
   with open('seen.json') as f:
     seen = json.load(f)
-  seen.update({nick: int(time.time()) for nick in
-    reduce(lambda a,b: a|b, (users[chan] for chan in users if chan[0] == '#'))})
+  seen.update({nick: int(time.time()) for chan in users if chan[0] == '#' for nick in users[chan]})
   seen[nick] = int(time.time())
   with open('seen.json', 'w') as f:
     json.dump(seen, f)
@@ -676,20 +691,20 @@ class dbDict(dict):
       return u'Erro: chave "%s" do bd não é lista' % key
     elif msg == '':
       return u', '.join(sorted(self[key]))
-    for action in ('+ ', '- ', '= '):
+    for action in ('+ ', '- ', '='):
       if msg.startswith(action):
-         items = [i.strip() for i in msg[len(action):].split(',')]
+         items = [i.strip() for i in msg[len(action):].split(',') if i.strip()]
          break
     else:
       return u'Erro: ação de bd local desconhecida'
-    if action == '= ':
+    if action == '=':
       if not equal:
         return u'ação não permitida, adicione ou remova os itens individualmente'
       if set(self[key]) == set(items):
         return u'já era isso que estava no bd'
       self[key] = items
       self.sync()
-      return u', '.join(items)
+      return u'%d itens na lista: %s' % (len(items),  u', '.join(items)) if items else u'lista esvaziada'
     sync = False
     resp = []
     for item in items:
@@ -761,7 +776,7 @@ def labsmsg(msg):
   Recebe mensagens de programas ou usuários dentro do labs
   igual ao relay do wm-bot
   """
-  if msg.startswith(('#wikipedia-pt-bots ', '#wikipedia-pt-tecn ')):
+  if msg.startswith(('#wikipedia-pt-bots ', '#mediawiki-pt ')):
     # limita a menssagem a 450 caracteres ascii sem quebrar um utf-8 no meio
     m = msg[19:469].decode('utf-8', 'ignore').encode('utf-8')
     return msg[:18], m
@@ -772,7 +787,7 @@ def phabFeed(msg, user):
   """
   for name in db['phab']:
     if name in msg:
-      return '#wikipedia-pt-tecn', msg.replace(name, u'\x1f' + name + u'\x1f')
+      return '#mediawiki-pt', msg.replace(name, u'\x1f' + name + u'\x1f')
 
 def kickban(nick, args, reason=''):
   """
@@ -796,7 +811,7 @@ def kickban(nick, args, reason=''):
   nick = nick.encode('utf-8') if type(nick) == unicode else nick
   reason = kb[2].encode('utf-8') if type(kb[2]) == unicode else kb[2]
   if action == 'kb':
-    return ['/raw MODE #wikipedia-pt-ops +b ' + target] + \
+    return ['/raw MODE #wikimedia-ops-pt +b ' + target] + \
       ['/raw KICK %s %s %s' % (c, nick, reason) for c in args.get('channels', [])]
   elif action == 'kick':
     return ['/raw KICK %s %s %s' % (c, nick, reason) for c in args.get('channels', [])]
@@ -817,14 +832,52 @@ def setOutput(channel=None):
 lastusers = {}
 
 def floodcheck(channel, user):
+  """
+  kick-ban quem floodar um canal
+  """
   if channel not in channels:
     return
   global lastusers
   now = int(time.time())
   nick, host = user.split('!')[0], user.split('@')[1]
   lastusers[channel] = (lastusers.get(channel, tuple()) + ((host, now),))[-20:]
-  if host.startswith('wiki') or nick.strip('_') in db['conhecidos']:
+  if host.startswith('wiki') or nick.strip('_') in db['conhecidos'] or users[channel].get(nick, 0):
     return
-  if [u for u, t in lastusers[channel][-5:]].count(host) == 8 or \
-    [u for u, t in lastusers[channel] if t > now - 60].count(host) == 5:
-    return kickban(nick, 'kb', 'flood')
+  
+  for item in db['flood']:
+    n, seg = map(int, item.split(':'))
+    if [u for u, t in lastusers[channel][-n:] if t > now - seg].count(host) == n:
+      return kickban(nick, 'kb', 'flood')
+
+def cleanBans(cmd=None):
+  if cmd:
+    lists['action'] = [cmd]
+    if cmd != 'load' and getLists == len(lists) < 10:
+      lists['action'].append('load')
+  if len(lists.get('action', [])):
+    action = lists['action'].pop()
+    if action == 'load':
+      lists['queue'] = []
+      for chan in users:
+        if chan[0] == '#' and chan in channels and users[chan]['ptwikisBot'] == 2:
+          lists['queue'].extend(['mode %s +b' % chan, 'mode %s +q' % chan])
+      if lists['queue']:
+        return '/raw ' + lists['queue'].pop(0)
+    elif action in ('clean', 'test'):
+      t = int(time.time()) - 86400 * 30 # 30 dias atrás
+      queue = []
+      for chan in lists:
+        if chan[0] != '#':
+          continue
+        for l in lists[chan]:
+          for entry in lists[chan][l]:
+            if entry[2] < t:
+              queue.append('mode %s -b %s' % (chan, entry[0]))
+      if queue and action == 'clean':
+        lists['queue'] = queue
+      elif queue and action == 'test':
+        lists['queue'] = ['privmsg #wikipedia-pt-tecn: bans a limpar: ' + ', '.join(queue)]
+      elif 'queue' in lists:
+        del lists['queue']
+  elif 'queue' in lists:
+    del lists['queue']

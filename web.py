@@ -60,10 +60,14 @@ def app(environ, start_response):
 def github(environ, start_response):
   size = int(environ.get('CONTENT_LENGTH', 0))
   data = json.loads(environ.get('wsgi.input').read(size))
-  for c in data['commits']:
+  for c in data.get('commits', []):
     msg = u'\x0fGitHub [\x0306%s\x03] \x0303%s\x03 (%s) \x0314commit\x03 \x0312%s\x03 (%s)' % \
       (data['repository']['full_name'], c['author']['name'], c['author']['username'], c['url'], c['message'][:100])
-    irc('#wikipedia-pt-tecn ' + msg.encode('utf-8'))
+    irc('#mediawiki-pt ' + msg.encode('utf-8'))
+  if 'issue' in data:
+    msg = u'\x0fGitHub [\x0306%s\x03] \x0303%s\x03 \x0314issue\x03 %s \x0312%s\x03' % \
+      (data['repository']['full_name'], data['issue']['user']['login'], data['issue']['title'], data['issue']['url'])
+    irc('#mediawiki-pt ' + msg.encode('utf-8'))
 
   start_response('200 OK', [('Content-Type', 'text/html')])
   return ['github OK']

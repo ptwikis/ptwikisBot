@@ -31,35 +31,38 @@ class Bot(irc.IRCClient):
   """
   nickname = 'ptwikisBot'
   username = 'ptwikisBot'
-  with open('.password') as p:
-    password = p.read()
 
   whoisArgs = {}
   users = {}
+  lists = {}
   names = {}
 
   def __init__(self):
     """
     Chamado quando uma instância do robô é iniciada.
     Inicia a classe de registro de avisos e estabelece
-    bottools.users como referencia para self.users. Dessa
-    forma log e users não serão perdidos quando bottools
-    é recarregado.
+    bottools.users como referencia para self.users, e o
+    mesmo para lists. Dessa forma log e users não serão
+    perdidos quando bottools é recarregado.
     """
     bottools.log = bottools.Log()
+    bottools.lists = self.lists
     bottools.users = self.users
 
   def signedOn(self):
     """
     Chamado quando o robô se conecta ao servidor com sucesso.
     """
-    self.msg('NickServ', 'GHOST ' + self.nickname + ' ' + self.password)
-    self.msg('Nickserv', 'IDENTIFY ' + self.password)
+    with open('.password') as p:
+      password = p.read()
+    self.msg('Nickserv', 'IDENTIFY ptwikisbot ' + password)
 
   def irc_396(self, prefix, params):
     """
     Recebe notificação que foi identificado
     """
+    if self.nickname != 'ptwikisBot':
+       self.sendLine('NS REGAIN ptwikisBot')
     if params[1] == 'wikimedia/bot/ptwikisbot':
        self.joinChannels()
     else:
@@ -138,11 +141,16 @@ class Bot(irc.IRCClient):
           self.msg(channel, 'Erro: ' + repr(e))
         else:
           self.msg(channel, 'Funções recarregadas')
-      elif comando == 'rcconnect':
+      elif comando == 'reconnect':
         if hasattr(self, 'rcconnector'):
           self.rcconnector.connect()
           self.msg(channel, u'tentando reconectar ao irc.wikimedia')
           del self.rcconnector
+      elif comando == 'restart' and self.cloak(user) in bottools.db['operador']:
+        global restart
+        restart = True
+        self.sendLine('QUIT Restart')
+        reactor.callLater(5, reactor.stop)
 
       # Comandos que podem ser chamados em qualquer canal e cuja a resposta é
       # dada no mesmo canal do comando devem ser colocados na função cmd do
@@ -212,7 +220,7 @@ class Bot(irc.IRCClient):
     """
     Convida um wikiadmin para o canal #wikipedia-pt-admins
     """
-    if nick not in self.users.get('#wikipedia-pt-admins', set()) and nick in self.users['#wikipedia-pt']:
+    if nick not in self.users.get('#wikipedia-pt-admins', {}) and nick in self.users['#wikipedia-pt']:
       self.invite(nick, '#wikipedia-pt-admins')
 
   def irc_JOIN(self, user, params):
@@ -223,7 +231,7 @@ class Bot(irc.IRCClient):
     if nick == self.nickname:
        return
     channel = params[-1]
-    self.users[channel].add(nick)
+    self.users[channel][nick] = 0
     self.users.setdefault(nick, {}).update({'host': user.split('@')[1]})
     cloak = self.cloak(user)
     if cloak:
@@ -242,7 +250,8 @@ class Bot(irc.IRCClient):
     for chan in self.users:
       if chan[0] != '#':
         continue
-      self.users[chan].discard(nick)
+      if nick in self.users[chan]:
+        del self.users[chan][nick]
     resp = bottools.quit(user.split('!')[0])
     if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
       self.cmd(resp[1], resp[0])
@@ -253,9 +262,9 @@ class Bot(irc.IRCClient):
     """
     Recebe notificação que alguém saiu de um canal (não do IRC)
     """
-    self.users[channel].discard(nick)
-    if nick in self.users and nick not in reduce(lambda a,b: a|b,
-      (self.users[chan] for chan in self.users if chan[0] == '#')):
+    if nick in self.users[channel]:
+      del self.users[channel][nick]
+    if nick in self.users and nick not in {n for c in self.users if c[0] == '#' for n in self.users[c]}:
       del self.users[nick]
 
   def userKicked(self, kicked, channel, kicker, message):
@@ -268,24 +277,23 @@ class Bot(irc.IRCClient):
     """
     Chamado quando o robô sai de um canal (não do IRC)
     """
-    rmNicks = self.name[channel] - reduce(lambda a,b: a|b,
-      (self.users[chan] for chan in self.users if chan[0] == '#' and chan != channel))
     del self.users[channel]
-    for nick in rmNicks:
-      if nick in self.users:
+    allNicks = {n for c in self.users if c[0] == '#' for n in self.users[c]}
+    for nick in [n for n in self.users if n[0] != '#']:
+      if nick not in allNicks:
         del self.users[nick]
 
   def userRenamed(self, old, new):
     """
     Recebe a notificação de que alguém mudou de nick.
     """
-    for chan in self.users:
-      if old in self.users[chan]:
-        self.users[chan].remove(old)
-        self.users[chan].add(new)
-    if old in self.users:
-      self.users[new] = self.users[old]
-      del self.users[old]
+    for item in self.users.keys():
+      if item[0] == '#' and old in self.users[item]:
+        self.users[item][new] = self.users[item][old]
+        del self.users[item][old]
+      elif item == old:
+        self.users[new] = self.users[old]
+        del self.users[old]
     bottools.renamed(old, new)
 
   def irc_RPL_WHOISUSER(self, prefix, params):
@@ -322,12 +330,16 @@ class Bot(irc.IRCClient):
   def irc_RPL_NAMREPLY(self, prefix, params):
     """
     Recebe nomes de quem está no canal
+    params[2] é o canal, params[3] é a lista de nicks (@nick = op e +nick = voice)
     """
-    self.names.setdefault(params[2], set()).update(set(nick.strip('+@') for nick in params[3].split()))
+    flags = {'@': 2, '+': 1}
+    for nick in params[3].split():
+      self.names.setdefault(params[2], {})[nick.strip('+@')] = flags.get(nick[0], 0)
 
   def irc_RPL_ENDOFNAMES(self, prefix, params):
     """
     Fim da lista de quem está no canal, envia lista para bottools.users
+    params[1] é o canal
     """
     self.users[params[1]] = self.names[params[1]]
     del self.names[params[1]]
@@ -345,6 +357,68 @@ class Bot(irc.IRCClient):
     cloak = self.cloak(params[3])
     if cloak:
       self.users[params[5]]['cloak'] = cloak
+
+  def RPL_BANLIST(self, prefix, params):
+    """
+    Recebe itens da banlist
+    params = ['ptwikisBot', '#canal', 'ban', 'op!que@baniu', 'unix timestamp']
+    """
+    self.lists.setdefault(params[1], {}).setdefault('ban', []).append((params[2], params[3], int(params[4])))
+
+  def RPL_ENDOFBANLIST(self, prefix, params):
+    """
+    Fim da banlist
+    """
+    self.listProcess()
+
+  def irc_728(self, prefix, params):
+    """
+    Recebe itens da quietlist
+    params = ['ptwikisBot', '#canal', 'q', 'ban', 'op!que@silenciou', 'unix timestamp']
+    """
+    self.lists.setdefault(params[1], {}).setdefault('ban', []).append((params[3], params[4], int(params[5])))
+
+  def irc_729(self, prefix, params):
+    """
+    Fim da quietlist
+    """
+    self.listProcess()
+
+  def listProcess(self):
+    """
+    Processa fila de comandos para banlists e quietlists
+    """
+    if 'queue' not in self.lists:
+      return
+    if self.lists['queue']:
+      self.sendLine(self.lists['queue'].pop(0))
+    else:
+      bottools.cleanBans()
+      if self.lists.get('queue'):
+        self.sendLine(self.lists['queue'].pop(0))
+
+  def irc_MODE(self, user, params):
+    """
+    Recebe mudança em modo do canal
+    params = ['#canal', 'modo (+b, -b, +q, -q, +v, +o, etc...)', 'argumento (ban mask, nick)']
+    """
+    if params[0] not in bottools.channels:
+      return
+    if params[1] in ('+b', '+q'):
+      self.lists.setdefault(params[0], {}).setdefault('ban' if params[1] == '+b' else 'quiet', []).append(
+        (params[2], user, int(time.time())))
+    elif params[1] in ('-b', '-q'):
+      lType = 'ban' if params[1] == '-b' else 'quiet'
+      for i, b in enumerate([entry[0] for entry in self.lists.get(params[0], {}).get(lType, [])]):
+        if b == params[2]:
+          self.lists[params[0]][lType].pop(i)
+          break
+      if user.split('!')[0] == self.nickname:
+        self.listProcess()
+    elif params[1] in ('+v', '+o'):
+      self.users[params[0]][params[2]] = 2 if params[1] == '+o' else 1
+    elif params[1] in ('-v', '-o'):
+      self.sendLine('NAMES ' + params[0])
 
   def noticed(self, user, channel, message):
     self.output('NOTICE from %s: %s' % (user.split('!')[0], message))
@@ -375,7 +449,7 @@ class Bot(irc.IRCClient):
     Notifica uma queda no irc.wikimedia
     """
     self.rcconnector = connector
-    self.msg('#wikipedia-pt-bots', u'Falha na conexão com o irc.wikimedia (%s) use !rcconnect para reconectar')
+    self.msg('#wikipedia-pt-bots', u'Falha na conexão com o irc.wikimedia (%s) use !reconnect para reconectar' % reason)
 
 class BotFactory(protocol.ClientFactory):
   """
@@ -397,6 +471,7 @@ class BotFactory(protocol.ClientFactory):
     """
     Se desconectar, reconecta ao servidor.
     """
+    print '[%s] freenode connection lost:' % time.strftime('%d-%m-%Y %H:%M:%S'), reason
     connector.connect()
 
   def clientConnectionFailed(self, connector, reason):
@@ -445,6 +520,7 @@ class RCFactory(protocol.ClientFactory):
     """
     p = RCfeed()
     p.factory = self
+    print 'BuildProtocol RC %s' % time.strftime('%d-%m-%Y %H:%M:%S')
     return p
 
   def clientConnectionLost(self, connector, reason):
@@ -459,7 +535,7 @@ class RCFactory(protocol.ClientFactory):
     Chamado quando a conexão falha.
     """
     print '[%s] irc.wikimedia connection failed:' % time.strftime('%d-%m-%Y %H:%M:%S'), reason
-    bot.bot.rclost(reason, connector)
+    bot.bot.rclost(repr(reason), connector)
 
 class LabsMsg(protocol.Protocol):
     """
@@ -499,3 +575,7 @@ if __name__ == '__main__':
 
   # Rodar roboôs
   reactor.run()
+
+  # Restart
+  if 'restart' in globals():
+    raise Exception('Restarting') # sair com erro força o grid engine a reiniciar o processo
