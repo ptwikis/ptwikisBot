@@ -20,7 +20,7 @@ reTemplate = re.compile(ur'\{\{([^{}|]+)\}\}')
 
 channels = {'#wikipedia-pt': u'w',
             '#wikipedia-pt-bots': u'w',
-            '#wikipedia-pt-admins': u'w',
+            '#wikimedia-admin-pt': u'w',
             '#wikimedia-br': u'wmbr',
             '#wikimedia-pt': u'wmpt',
             '#wiktionary-pt': u'wikt',
@@ -33,7 +33,7 @@ channels = {'#wikipedia-pt': u'w',
             '#wikidata-pt': u'd',
             '#wikimedia-ajuda': u'w',
             '#wikimedia-ops-pt': u'w',
-            '#mediawiki-pt': u'mw'}
+            '#mediawiki-pt': u'w'}
 
 prefixes = {u'w': u'https://pt.wikipedia.org/wiki/',
             u'WP': u'https://pt.wikipedia.org/wiki/Wikipédia:',
@@ -601,6 +601,7 @@ def join(user, channel, cloak):
   """
   now = int(time.time())
   nick = user.split('!')[0]
+
   if not 'users' in db:
     db['users'] = dbDict()
   if nick in db['users'] and db['users'][nick] > now:
@@ -661,6 +662,8 @@ def parseLink(link, channel, template=False):
     return wiki + (template and link[0].lower() != u'predefinição' and u'Predefinição:' or u'') + url(u':'.join(link))
   elif link[0].lower() not in prefixes and len(link[0]) != 2:
     return wiki + url(u':'.join(link))
+  elif len(link) > 1 and link[0].lower() == 'wp':
+    return u'https://pt.wikipedia.org/wiki/Wikipédia:' + url(u':'.join(link[1:]))
   else:
     link[0] = link[0].lower()
     prefix = link[0] in prefixes and prefixes[link[0]] or u'https://{}.wikipedia.org/wiki/'.format(link[0])
@@ -754,7 +757,7 @@ def fn2wm(chan):
   Retorna o canal do irc.wikimedia correspondente ao canal do freenode
   """
   chan = chan.split('-')
-  if len(chan) < 2:
+  if len(chan) < 2 or chan == ['#mediawiki', 'pt']:
     return '#pt.wikipedia'
   return '#' + chan[1] + '.' + chan[0][1:]
 
@@ -777,9 +780,10 @@ def labsmsg(msg):
   igual ao relay do wm-bot
   """
   if msg.startswith(('#wikipedia-pt-bots ', '#mediawiki-pt ')):
-    # limita a menssagem a 450 caracteres ascii sem quebrar um utf-8 no meio
-    m = msg[19:469].decode('utf-8', 'ignore').encode('utf-8')
-    return msg[:18], m
+    chan, msg = msg.split(' ', 1)
+    # limita a menssagem a 545 caracteres ascii sem quebrar um utf-8 no meio
+    msg = msg[:545].decode('utf-8', 'ignore')
+    return chan, msg
 
 def phabFeed(msg, user):
   """

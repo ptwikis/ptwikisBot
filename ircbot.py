@@ -83,9 +83,7 @@ class Bot(irc.IRCClient):
     Dá um ghost no nick caso alguém o esteja usando ou
     o robô se reconectar antes do nick cair.
     """
-    self.msg('NickServ', 'GHOST ' + self.nickname + ' ' + self.password)
-    self.setNick(self.nickname)
-    self.msg('Nickserv', 'IDENTIFY ' + self.password)
+    self.msg('NickServ', 'REGAIN ptwikisBot')
 
   def msg(self, channel, message, *args):
     """
@@ -216,13 +214,6 @@ class Bot(irc.IRCClient):
     if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
       self.msg(resp[0], resp[1])
 
-  def adminInvite(self, nick):
-    """
-    Convida um wikiadmin para o canal #wikipedia-pt-admins
-    """
-    if nick not in self.users.get('#wikipedia-pt-admins', {}) and nick in self.users['#wikipedia-pt']:
-      self.invite(nick, '#wikipedia-pt-admins')
-
   def irc_JOIN(self, user, params):
     """
     Recebe a notificação de que alguém entrou em uma canal.
@@ -236,8 +227,6 @@ class Bot(irc.IRCClient):
     cloak = self.cloak(user)
     if cloak:
       self.users[nick]['cloak'] = cloak
-      if channel == '#wikipedia-pt' and cloak in bottools.db['wikiadmin']:
-        reactor.callLater(30, self.adminInvite, nick)
     resp = bottools.join(user, channel, self.cloak(user))
     if type(resp) == tuple and len(resp) == 2 and resp[0][0] == '#':
       self.cmd(resp[1], resp[0])

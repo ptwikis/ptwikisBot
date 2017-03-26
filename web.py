@@ -64,9 +64,11 @@ def github(environ, start_response):
     msg = u'\x0fGitHub [\x0306%s\x03] \x0303%s\x03 (%s) \x0314commit\x03 \x0312%s\x03 (%s)' % \
       (data['repository']['full_name'], c['author']['name'], c['author']['username'], c['url'], c['message'][:100])
     irc('#mediawiki-pt ' + msg.encode('utf-8'))
-  if 'issue' in data:
-    msg = u'\x0fGitHub [\x0306%s\x03] \x0303%s\x03 \x0314issue\x03 %s \x0312%s\x03' % \
-      (data['repository']['full_name'], data['issue']['user']['login'], data['issue']['title'], data['issue']['url'])
+  _type = 'issue' in data and 'issue' or 'pull_request' in data and 'pull_request'
+  if _type:
+    msg = u'\x0fGitHub [\x0306%s\x03] \x0303%s\x03 \x0314%s\x03 %s \x0312%s\x03 %s' % \
+      (data['repository']['full_name'], data[_type]['user']['login'], _type, data[_type]['title'],
+           data[_type]['html_url'], data[_type]['body'][:80])
     irc('#mediawiki-pt ' + msg.encode('utf-8'))
 
   start_response('200 OK', [('Content-Type', 'text/html')])
