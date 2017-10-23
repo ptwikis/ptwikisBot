@@ -11,7 +11,7 @@ em algum canal que o ptwikisBot esteja.
 @licença: GNU General Public License 3.0 (GPL V3)
 """
 
-import time, re, oursql, os, socket, json
+import time, re, oursql, os, socket, json, sys
 from urllib import urlopen
 from collections import deque
 
@@ -511,12 +511,12 @@ def RC(channel, msg):
 
     # Direitos de usuário
     elif msg[0] in (u'Especial:Log/rights', u'Special:Log/rights'):
-      grupos = re.search(ur'alterou grupo de acesso para Usuári[ao](?:\(a\))?:([^:]+): de (.*?) para (.*?)(?:: ?(.*)|$)', msg[5])
-      if msg[0] == u'Special:log/rights':
+      grupos = re.search(ur'changed group membership for (?:Usuári[ao]|Utilizador)(?:\(a\))?:([^:]+): from (.*?) to (.*?)(?:: ?(.*)|$)', msg[5])
+      if msg[0] == u'Special:Log/rights':
         grupos = re.search(ur'([^@: ]+@[^: ]+) from (.*?) to (.*?)(?:: ?(.*)|$)', msg[5])
         # changed group membership for User:YmKavishwar@guwikiquote from ipblock-exempt, sysop to ipblock-exempt: temp access expired
       if not grupos:
-        print u'Erro no parser de alterações de direitos: %s, %r' % (channel, msg[5])
+        sys.stderr.write('Erro no parser de alterações de direitos: %s: %s\n' % (channel, msg[5].encode('utf-8')))
         return
       elif '@ptw' not in grupos.group(1) and '@brwikimedia' not in grupos.group(1):
         return
@@ -757,7 +757,7 @@ def fn2wm(chan):
   Retorna o canal do irc.wikimedia correspondente ao canal do freenode
   """
   chan = chan.split('-')
-  if len(chan) < 2 or chan == ['#mediawiki', 'pt']:
+  if len(chan) < 2 or chan in (['#mediawiki', 'pt'], ['#wikimedia', 'admin', 'pt']):
     return '#pt.wikipedia'
   return '#' + chan[1] + '.' + chan[0][1:]
 

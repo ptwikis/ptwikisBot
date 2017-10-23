@@ -445,6 +445,7 @@ class BotFactory(protocol.ClientFactory):
   Inicia o protocolo do robô do freenode e reinicia quando
   perde a conexão.
   """
+  lastConnections = []
 
   def buildProtocol(self, addr):
     """
@@ -461,6 +462,12 @@ class BotFactory(protocol.ClientFactory):
     Se desconectar, reconecta ao servidor.
     """
     print '[%s] freenode connection lost:' % time.strftime('%d-%m-%Y %H:%M:%S'), reason
+    self.lastConnections.append(int(time.time()))
+    if sum(1 for t in self.lastConnections if t + 6000 > time.time()) > 6:
+      reactor.stop()
+      return
+    if any(1 for t in self.lastConnections if t + 600 > time.time()):
+      time.sleep(600)
     connector.connect()
 
   def clientConnectionFailed(self, connector, reason):
